@@ -6,6 +6,7 @@ Notable changes to Xenosaga Episode I: Recompiled are recorded here. This projec
 
 ### Runtime
 
+- Fixed severe vertical shaking on the title screen at 1x internal resolution by presenting every row of the game's full-height framebuffer. The tested in-engine cutscenes also presented stably at 1x. ([#13](https://github.com/gwencrow/xenosaga-recomp/issues/13))
 - Added strict validation of native VU1 blocks against the interpreter.
 - Added ABI compatibility checks to prevent linking incompatible native block objects.
 - Restricted experimental whole-program VU1 execution to offline replay.
@@ -42,6 +43,8 @@ These results represent one recorded route with one paired trial per resolution,
 
 ### Known limitations
 
+- Mild title-screen shaking at 3x was visible in both the original and corrected presentation modes.
+- The corrected 1x build showed mild flicker and bottom-edge artifacts in pre-rendered cutscenes. The original 1x behavior for those scenes has yet to be confirmed.
 - Demanding scenes remain below the 30 FPS target.
 - In-engine cutscenes can exhibit significant audio desynchronization.
 - Seven existing GS regression tests remain unresolved.

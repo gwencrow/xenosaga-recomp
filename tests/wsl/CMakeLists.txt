@@ -10,3 +10,7 @@ target_compile_options(ps2_gs_cache_backend_under_test PRIVATE -mavx2)
 add_executable(xs_iso_test iso_test.cpp)
 target_compile_features(xs_iso_test PRIVATE cxx_std_17)
 add_test(NAME port.iso_lookup COMMAND xs_iso_test)
+
+add_executable(xs_gs_present_test gs_present_test.cpp)
+target_link_libraries(xs_gs_present_test PRIVATE ps2_gs_cache_backend_under_test)
+add_test(NAME port.gs_field_presentation COMMAND xs_gs_present_test)
