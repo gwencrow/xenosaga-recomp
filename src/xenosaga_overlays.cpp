@@ -1294,6 +1294,9 @@ namespace
         }
         // The boot ELF already contains ov02 at 0xA00000.
         activateOverlayFunctions(2);
+        // The game renders complete 448-line frames even in NTSC field mode.
+        const char *bob = std::getenv("XS_GS_BOB");
+        runtime.gs().setFullFramePresentation(!(bob && std::strcmp(bob, "1") == 0));
         std::cout << "[xenosaga] overlay hook installed" << std::endl;
         xs_startHeartbeat(runtime);
         xs_traceDisplay(runtime);
