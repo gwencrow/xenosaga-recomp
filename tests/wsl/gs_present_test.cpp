@@ -20,10 +20,10 @@ namespace
                ((5ull * kWidth - 1) << 32) | ((height - 1) << 44);
     }
 
-    uint64_t dispfb(uint64_t page)
+    uint64_t dispfb(uint64_t page, uint64_t sourceY = kSourceY)
     {
         return page | (uint64_t{kBufferWidth} << 9) |
-               (uint64_t{kSourceX} << 32) | (uint64_t{kSourceY} << 43);
+               (uint64_t{kSourceX} << 32) | (sourceY << 43);
     }
 
     void writeRows(GS &gs, uint32_t page)
@@ -90,7 +90,13 @@ int main()
     if (!check(gs, regs, "different display buffers", kHeight, true))
         return 1;
 
+    regs.pmode = 0xff27; // Both circuits, with circuit 1 fully opaque.
+    regs.dispfb2 = dispfb(kPage, kSourceY + 1);
+    if (!check(gs, regs, "same buffer with different read origins", kHeight, true))
+        return 1;
+
     regs.pmode = 2;
+    regs.dispfb2 = dispfb(kPage + 128);
     if (!check(gs, regs, "single display circuit", kHeight, false))
         return 1;
 
