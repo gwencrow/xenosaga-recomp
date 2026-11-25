@@ -13,6 +13,9 @@ MINGW_BIN="${MINGW_BIN:-/c/msys64/mingw64/bin}"
 export PATH="$MINGW_BIN:$PATH"
 EXE="$BUILD/ps2EntryRunner.exe"
 [ -f "$EXE" ] || { echo "no build at $EXE"; exit 1; }
+python_cmd=python3
+command -v "$python_cmd" >/dev/null || python_cmd=python
+"$python_cmd" "$(dirname "$0")/registrar.py" "$EXE" "${XS_GUEST_ELF:-$DEST/SLUS_204.69}"
 
 if [ -f "$DEST/XenosagaRecomp.exe" ]; then
     if ls "$DEST"/XenosagaRecomp.exe.bak-* >/dev/null 2>&1; then

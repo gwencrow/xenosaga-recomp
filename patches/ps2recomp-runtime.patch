@@ -2441,7 +2441,7 @@ index 509fd07..16775c0 100644
  
  }
 diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
-index 589d768..bfd8845 100644
+index 589d768..72e3eee 100644
 --- a/ps2xRuntime/CMakeLists.txt
 +++ b/ps2xRuntime/CMakeLists.txt
 @@ -253,7 +253,7 @@ option(PS2X_ENABLE_FFMPEG "Enable FFmpeg-backed MPEG video decoding" ${PS2X_ENAB
@@ -2484,7 +2484,20 @@ index 589d768..bfd8845 100644
  set(RUNNER_MAIN_CPP "${CMAKE_CURRENT_SOURCE_DIR}/src/runner/main.cpp")
  set(ROOT_MAIN_CPP "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
  
-@@ -506,7 +516,7 @@ target_include_directories(ps2_runtime PUBLIC
+@@ -465,3 +475,12 @@ endif()
++# Check every runner build, including incremental builds and the upstream
++# placeholder, without requiring a game for runtime library or test targets.
++add_custom_target(xs_verify_registrar
++    COMMAND ${CMAKE_COMMAND} "-Drunner_dir=${CMAKE_CURRENT_SOURCE_DIR}/src/runner"
++        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/verify_xenosaga_registrar.cmake"
++    VERBATIM
++)
++add_dependencies(ps2EntryRunner xs_verify_registrar)
++
+ if(PS2X_ENABLE_RUNNER_UNITY_BUILD)
+     set_target_properties(ps2EntryRunner PROPERTIES
+         UNITY_BUILD ON
+@@ -506,7 +525,7 @@ target_include_directories(ps2_runtime PUBLIC
      ${CMAKE_CURRENT_SOURCE_DIR}/src/lib/Kernel
  )
  
@@ -2493,7 +2506,7 @@ index 589d768..bfd8845 100644
  target_link_libraries(ps2EntryRunner
      PRIVATE
      ps2_runtime
-@@ -577,6 +587,27 @@ if(MSVC)
+@@ -577,6 +596,27 @@ if(MSVC)
      target_link_options(ps2EntryRunner PRIVATE "/FORCE:MULTIPLE")
  endif()
  
@@ -2521,7 +2534,7 @@ index 589d768..bfd8845 100644
  # Vita: Work around for GCC 10's LTO plugin
  if(PS2X_IS_VITA)
      target_link_options(ps2EntryRunner PRIVATE "-Wl,--allow-multiple-definition")
-@@ -597,7 +628,7 @@ install(TARGETS ps2_runtime ps2EntryRunner
+@@ -597,7 +637,7 @@ install(TARGETS ps2_runtime ps2EntryRunner
      ARCHIVE DESTINATION lib
  )
  
@@ -2530,7 +2543,7 @@ index 589d768..bfd8845 100644
      install(DIRECTORY "${FFMPEG_BIN_DIR}/"
          DESTINATION bin
          FILES_MATCHING
-@@ -608,3 +639,62 @@ endif()
+@@ -608,3 +648,62 @@ endif()
  install(DIRECTORY include/
      DESTINATION include
  )
@@ -16649,3 +16662,21 @@ index 0000000..9af84db
 +    std::printf("checksum: %016llx\n", (unsigned long long)checksum);
 +    return 0;
 +}
+diff --git a/ps2xRuntime/cmake/verify_xenosaga_registrar.cmake b/ps2xRuntime/cmake/verify_xenosaga_registrar.cmake
+new file mode 100644
+index 0000000..3930249
+--- /dev/null
++++ b/ps2xRuntime/cmake/verify_xenosaga_registrar.cmake
+@@ -0,0 +1,12 @@
++set(registrar "${runner_dir}/register_functions.cpp")
++set(receipt "${runner_dir}/register_functions.sha256")
++set(recovery "Run tools/assemble.py with the generated main ELF and function sources.")
++if(NOT EXISTS "${registrar}" OR NOT EXISTS "${receipt}")
++    message(FATAL_ERROR "Missing validated Xenosaga registrar in ${runner_dir}. ${recovery}")
++endif()
++file(READ "${receipt}" expected)
++string(STRIP "${expected}" expected)
++file(SHA256 "${registrar}" actual)
++if(NOT actual STREQUAL expected)
++    message(FATAL_ERROR "Xenosaga registrar changed after validation in ${runner_dir}. ${recovery}")
++endif()

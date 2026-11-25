@@ -13,12 +13,16 @@ Overlays all load at the same address (0xA00000), so each overlay's functions
 are renamed with an xs_ovNN_ prefix and registered into the shared function
 table only while that overlay is loaded (see src/xenosaga_overlays.cpp).
 """
+import argparse
+import hashlib
 import re
 import shutil
 import sys
 from pathlib import Path
 
 import os
+
+from registrar import elf_entry, entry_slot, entry_symbol
 
 # Project layout (override with environment variables):
 #   <XS_ROOT>/port/        this repository
@@ -56,21 +60,12 @@ def reset_runner():
         p.unlink()
 
 
-def assemble_main():
+def prepare_registrar(elf):
     out = RECOMP / "output"
-    copied = dropped = 0
-    for p in out.glob("*.cpp"):
-        if p.name == "register_functions.cpp":
-            continue
-        addr = file_addr(p)
-        if addr is not None and addr >= OVERLAY_REGION_START:
-            dropped += 1  # embedded copy of ov02; handled by the overlay system
-            continue
-        shutil.copy2(p, RUNNER / p.name)
-        copied += 1
-
-    reg = (out / "register_functions.cpp").read_text()
-    base = int(re.search(r"TableBase = (0x[0-9a-f]+)u", reg).group(1), 16)
+    path = out / "register_functions.cpp"
+    entry = elf_entry(elf)
+    reg = path.read_text()
+    base, _ = entry_slot(reg, entry, path)
     slots = (TABLE_END - base) >> 2
     reg = re.sub(r"TableEnd = 0x[0-9a-f]+u", f"TableEnd = {TABLE_END:#x}u", reg)
     reg = re.sub(r"TableSlotCount = \d+u", f"TableSlotCount = {slots}u", reg)
@@ -82,7 +77,28 @@ def assemble_main():
         if m and int(m.group(2), 16) >= OVERLAY_REGION_START:
             continue
         lines.append(line)
-    (RUNNER / "register_functions.cpp").write_text("\n".join(lines) + "\n")
+    reg = "\n".join(lines) + "\n"
+    _, slot = entry_slot(reg, entry, path)
+    # Keep the entry export in the registrar's translation unit so staging
+    # can identify the linked registrar without executing a Windows binary.
+    reg += (f'\n#ifdef _WIN32\nextern "C" __declspec(dllexport)\n'
+            f'PS2Runtime::RecompiledFunction {entry_symbol(entry)}()\n'
+            f'{{\n    return g_ps2RecompiledFunctionTable[{slot}];\n}}\n#endif\n')
+    return reg, base, slots
+
+
+def assemble_main(reg, base, slots):
+    out = RECOMP / "output"
+    copied = dropped = 0
+    for p in out.glob("*.cpp"):
+        if p.name == "register_functions.cpp":
+            continue
+        addr = file_addr(p)
+        if addr is not None and addr >= OVERLAY_REGION_START:
+            dropped += 1  # embedded copy of ov02; handled by the overlay system
+            continue
+        shutil.copy2(p, RUNNER / p.name)
+        copied += 1
 
     for name in ["ps2_recompiled_functions.h", "ps2_recompiled_stubs.h"]:
         shutil.copy2(out / name, INCLUDE / name)
@@ -131,8 +147,19 @@ def assemble_overlay(ov: str, table_base: int):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--elf", type=Path, default=ROOT / "gamefiles" / "SLUS_204.69",
+                        help="the main guest ELF used for generation")
+    args = parser.parse_args()
+    seal = RUNNER / "register_functions.sha256"
+    seal.unlink(missing_ok=True)
+    try:
+        reg, base, slots = prepare_registrar(args.elf)
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"@@ERROR Registrar preflight failed: {error}. "
+                         "Regenerate the main recomp output with setup_recomp.py and rerun assemble.py.")
     reset_runner()
-    base = assemble_main()
+    assemble_main(reg, base, slots)
     for ov in OVERLAYS:
         assemble_overlay(ov, base)
     for p in PORT_SRC.glob("*.cpp"):
@@ -146,6 +173,9 @@ def main():
     if vu1_blocks.exists():
         shutil.copy2(vu1_blocks, RUNNER / vu1_blocks.name)
         print(f"vu1 blocks: {vu1_blocks.name}")
+    registrar = reg.encode("utf-8")
+    (RUNNER / "register_functions.cpp").write_bytes(registrar)
+    seal.write_text(hashlib.sha256(registrar).hexdigest() + "\n")
 
 
 if __name__ == "__main__":
