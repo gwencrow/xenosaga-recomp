@@ -22,3 +22,14 @@ foreach(workers 1 8)
     set_tests_properties(port.gs_q_latch_${workers}_worker PROPERTIES
         ENVIRONMENT "PS2X_GS_THREADS=${workers}")
 endforeach()
+
+add_executable(xs_gs_presentation_order_test gs_presentation_order_test.cpp)
+target_link_libraries(xs_gs_presentation_order_test PRIVATE ps2_gs_cache_backend_under_test)
+foreach(workers 1 8)
+    foreach(pack 0 1)
+        add_test(NAME port.gs_presentation_order_${workers}_worker_pack_${pack}
+            COMMAND xs_gs_presentation_order_test)
+        set_tests_properties(port.gs_presentation_order_${workers}_worker_pack_${pack} PROPERTIES
+            ENVIRONMENT "PS2X_GS_THREADS=${workers};PS2X_GS_PACK=${pack}" TIMEOUT 20)
+    endforeach()
+endforeach()

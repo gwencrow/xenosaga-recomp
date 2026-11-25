@@ -6947,7 +6947,7 @@ index f0ad507..18706a1 100644
      normalizePresentationAlpha(result.pixels, result.width, result.height);
      result.displayFbp = displayFrame.fbp;
 diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
-index 9281d5f..367bfdc 100644
+index 9281d5f..ba4a726 100644
 --- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
 +++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
 @@ -1,14 +1,212 @@
@@ -7163,7 +7163,7 @@ index 9281d5f..367bfdc 100644
  
  namespace
  {
-@@ -105,12 +303,321 @@ namespace
+@@ -105,12 +303,350 @@ namespace
  }
  
  
@@ -7221,10 +7221,13 @@ index 9281d5f..367bfdc 100644
 +    // instead of after a whole batch (up to kMaxPendingBytes), so producers
 +    // and the worker overlap instead of taking turns.
 +    static constexpr size_t kReleaseBytes = 256u * 1024u;
-+    // Frames the host presenter asked for, oldest first (one per new game
-+    // frame, a few at most).
-+    std::deque<GSPresentationRequest> presentRequests;
-+    uint64_t lastQueuedDispfb1 = ~0ull;
++    struct PendingPresent
++    {
++        uint64_t marker;
++        GSPresentationRequest request;
++    };
++    static constexpr size_t kMaxPendingPresents = 4;
++    std::deque<PendingPresent> presentRequests;
 +
 +    static size_t commandBytes(const Command &cmd) { return cmd.data.size() + sizeof(Command); }
 +
@@ -7248,8 +7251,7 @@ index 9281d5f..367bfdc 100644
 +        bool wakeWorker;
 +        {
 +            std::unique_lock<std::mutex> lock(mutex);
-+            // Presents are tiny and come from the window's thread: never block it.
-+            if (cmd.type != Present && !stop && pendingBytes > kMaxPendingBytes)
++            if (!stop && pendingBytes > kMaxPendingBytes)
 +            {
 +                ++producersWaiting;
 +                done.wait(lock, [&] { return stop || pendingBytes <= kMaxPendingBytes; });
@@ -7258,6 +7260,33 @@ index 9281d5f..367bfdc 100644
 +            pendingBytes += commandBytes(cmd);
 +            queue.push_back(std::move(cmd));
 +            ++submitted;
++            wakeWorker = workerSleeping;
++        }
++        if (wakeWorker)
++            wake.notify_one();
++    }
++
++    void pushPresent(const GSPresentationRequest &request)
++    {
++        bool wakeWorker;
++        {
++            std::lock_guard<std::mutex> lock(mutex);
++            // Only coalesce in place when no GS work separates the samples.
++            if (!queue.empty() && queue.back().type == Present)
++            {
++                presentRequests.back().request = request;
++                return;
++            }
++            // Keep the newest sample when behind. Its old marker becomes a
++            // no-op, even if it has already moved into the worker's batch.
++            const uint64_t marker = submitted + 1;
++            Command cmd{Present, {}, {marker}};
++            queue.push_back(std::move(cmd));
++            pendingBytes += sizeof(Command);
++            ++submitted;
++            if (presentRequests.size() == kMaxPendingPresents)
++                presentRequests.pop_back();
++            presentRequests.push_back({marker, request});
 +            wakeWorker = workerSleeping;
 +        }
 +        if (wakeWorker)
@@ -7427,9 +7456,9 @@ index 9281d5f..367bfdc 100644
 +                    GSPresentationRequest request;
 +                    {
 +                        std::lock_guard<std::mutex> lock(q->mutex);
-+                        if (q->presentRequests.empty())
++                        if (q->presentRequests.empty() || q->presentRequests.front().marker != cmd.args[0])
 +                            break;
-+                        request = q->presentRequests.front();
++                        request = q->presentRequests.front().request;
 +                        q->presentRequests.pop_front();
 +                    }
 +                    t_presentRequest = &request;
@@ -7485,7 +7514,7 @@ index 9281d5f..367bfdc 100644
  void GS::init(uint8_t *vram, uint32_t vramSize, GSRegisters *privRegs)
  {
      m_localMemoryStorage = vram;
-@@ -124,6 +631,7 @@ void GS::init(uint8_t *vram, uint32_t vramSize, GSRegisters *privRegs)
+@@ -124,6 +660,7 @@ void GS::init(uint8_t *vram, uint32_t vramSize, GSRegisters *privRegs)
  
  void GS::reset()
  {
@@ -7493,7 +7522,7 @@ index 9281d5f..367bfdc 100644
      std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
      std::memset(m_ctx, 0, sizeof(m_ctx));
      m_prim = {};
-@@ -134,6 +642,7 @@ void GS::reset()
+@@ -134,6 +671,7 @@ void GS::reset()
      m_curB = 0x80;
      m_curA = 0x80;
      m_curQ = 1.0f;
@@ -7501,7 +7530,7 @@ index 9281d5f..367bfdc 100644
      m_curS = 0.0f;
      m_curT = 0.0f;
      m_curU = 0;
-@@ -503,6 +1012,12 @@ void GS::refreshDisplaySnapshot()
+@@ -503,6 +1041,12 @@ void GS::refreshDisplaySnapshot()
      snapshotVRAM();
  }
  
@@ -7514,7 +7543,7 @@ index 9281d5f..367bfdc 100644
  GSPresentationRequest GS::buildPresentationRequestUnlocked() const
  {
      GSPresentationRequest request{};
-@@ -521,23 +1036,66 @@ GSPresentationRequest GS::buildPresentationRequestUnlocked() const
+@@ -521,23 +1065,51 @@ GSPresentationRequest GS::buildPresentationRequestUnlocked() const
      request.preferredSource = m_preferredDisplaySourceFrame;
      request.preferredDestFbp = m_preferredDisplayDestFbp;
      request.hasPreferredSource = m_hasPreferredDisplaySource;
@@ -7533,9 +7562,16 @@ index 9281d5f..367bfdc 100644
      GSPresentationRequest request{};
 +    if (t_presentRequest)
      {
--        std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
++        request = *t_presentRequest;
++        // Display registers are sampled by the caller. Derive framebuffer
++        // context and preferred-source state from commands executed at the marker.
+         std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
 -        if (!m_backend || !m_privRegs)
-+        request = *t_presentRequest; // the worker, at the point the presenter asked
++        request.contextFrames[0] = m_ctx[0].frame;
++        request.contextFrames[1] = m_ctx[1].frame;
++        request.preferredSource = m_preferredDisplaySourceFrame;
++        request.preferredDestFbp = m_preferredDisplayDestFbp;
++        request.hasPreferredSource = m_hasPreferredDisplaySource;
 +    }
 +    else
 +    {
@@ -7557,38 +7593,15 @@ index 9281d5f..367bfdc 100644
 -            m_hostPresentationFrame.clear();
 -            m_hasHostPresentationFrame = false;
 -            m_hostPresentationWidth = m_hostPresentationHeight = 0u;
-+            // Async GS: don't wait for the GS to catch up (behind on a heavy
-+            // scene, that held the window to 1-2 frames a second). Queue a
-+            // present behind everything submitted so far; the worker stores
-+            // that frame when it gets there, and the window keeps showing the
-+            // last stored one meanwhile.
-+            bool queue = false;
-+            {
-+                std::lock_guard<std::mutex> lock(m_async->mutex);
-+                // Only when the game has shown a new frame since the last one
-+                // queued (or nothing is queued, e.g. a static screen).
-+                AsyncQueue &q = *m_async;
-+                if (request.dispfb1 != q.lastQueuedDispfb1 || q.presentRequests.empty())
-+                {
-+                    if (q.presentRequests.size() >= 4u)
-+                        q.presentRequests.back() = request; // far behind: refresh the newest
-+                    else
-+                    {
-+                        q.presentRequests.push_back(request);
-+                        queue = true;
-+                    }
-+                    q.lastQueuedDispfb1 = request.dispfb1;
-+                }
-+            }
-+            if (queue)
-+                m_async->push({AsyncQueue::Present, {}, {}});
++            // Admit the request and its execution marker under one queue lock.
++            m_async->pushPresent(request);
              return;
          }
 -        request = buildPresentationRequestUnlocked();
      }
  
      PresentationFrame frame{};
-@@ -566,6 +1124,14 @@ void GS::latchHostPresentationFrame()
+@@ -566,6 +1138,14 @@ void GS::latchHostPresentationFrame()
          m_hostPresentationSourceFbp = sourceFbp;
          m_hostPresentationUsedPreferred = usedPreferred;
          m_hasHostPresentationFrame = hasFrame;
@@ -7603,7 +7616,7 @@ index 9281d5f..367bfdc 100644
      }
  
      if (hasFrame)
-@@ -575,6 +1141,21 @@ void GS::latchHostPresentationFrame()
+@@ -575,6 +1155,21 @@ void GS::latchHostPresentationFrame()
      }
  }
  
@@ -7625,7 +7638,7 @@ index 9281d5f..367bfdc 100644
  bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
                                            uint32_t &outWidth,
                                            uint32_t &outHeight,
-@@ -640,13 +1221,56 @@ bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
+@@ -640,13 +1235,56 @@ bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
  
  void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
  {
@@ -7682,7 +7695,7 @@ index 9281d5f..367bfdc 100644
      PS2_IF_AGRESSIVE_LOGS({
          const uint32_t packetIndex = s_debugGifPacketCount.fetch_add(1, std::memory_order_relaxed);
          if (packetIndex < 48u)
-@@ -675,9 +1299,9 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
+@@ -675,9 +1313,9 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
          uint64_t tagHi = loadLE64(data + offset + 8);
          offset += 16;
  
@@ -7694,7 +7707,7 @@ index 9281d5f..367bfdc 100644
          uint8_t flg = static_cast<uint8_t>((tagLo >> 58) & 0x3);
          uint32_t nreg = static_cast<uint32_t>((tagLo >> 60) & 0xF);
          if (nreg == 0)
-@@ -730,7 +1354,9 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
+@@ -730,7 +1368,9 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
              // FLG=3 ("disabled" in the GS manual) behaves exactly like IMAGE: NLOOP qwords of image data.
              uint32_t imageBytes = nloop * 16;
              if (offset + imageBytes > sizeBytes)
@@ -7704,7 +7717,7 @@ index 9281d5f..367bfdc 100644
              processImageData(data + offset, imageBytes);
              offset += imageBytes;
          }
-@@ -739,6 +1365,15 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
+@@ -739,6 +1379,15 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
  
  bool GS::processNativePackedGIFPacket(const uint8_t *data, uint32_t sizeBytes)
  {
@@ -7720,7 +7733,7 @@ index 9281d5f..367bfdc 100644
      std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
      if (!data || sizeBytes < 16u || !m_backend)
          return false;
-@@ -748,7 +1383,8 @@ bool GS::processNativePackedGIFPacket(const uint8_t *data, uint32_t sizeBytes)
+@@ -748,7 +1397,8 @@ bool GS::processNativePackedGIFPacket(const uint8_t *data, uint32_t sizeBytes)
  
      const bool processed = visitPackedGifPacket(data, sizeBytes, [&](const PackedGifPacketTag &tag)
                                                  {
@@ -7730,7 +7743,7 @@ index 9281d5f..367bfdc 100644
  
          recordGifTagDebugEventUnlocked(sizeBytes, tag.nloop, GIF_FMT_PACKED, tag.nreg);
  
-@@ -773,6 +1409,7 @@ bool GS::processNativePackedGIFPacket(const uint8_t *data, uint32_t sizeBytes)
+@@ -773,6 +1423,7 @@ bool GS::processNativePackedGIFPacket(const uint8_t *data, uint32_t sizeBytes)
      if (!processed)
          return false;
  
@@ -7738,7 +7751,7 @@ index 9281d5f..367bfdc 100644
      ++m_nativePackedGIFPacketCount;
      return true;
  }
-@@ -784,7 +1421,23 @@ void GS::uploadImageNative(uint64_t bitbltbuf,
+@@ -784,7 +1435,23 @@ void GS::uploadImageNative(uint64_t bitbltbuf,
                             const uint8_t *data,
                             uint32_t sizeBytes)
  {
@@ -7762,7 +7775,7 @@ index 9281d5f..367bfdc 100644
      uploadImageNativeUnlocked(bitbltbuf, trxpos, trxreg, trxdir, data, sizeBytes);
  }
  
-@@ -888,6 +1541,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
+@@ -888,6 +1555,7 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
          m_curG = static_cast<uint8_t>((lo >> 32) & 0xFF);
          m_curB = static_cast<uint8_t>(hi & 0xFF);
          m_curA = static_cast<uint8_t>((hi >> 32) & 0xFF);
@@ -7770,7 +7783,7 @@ index 9281d5f..367bfdc 100644
          break;
      case 0x02:
      {
-@@ -896,9 +1550,10 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
+@@ -896,9 +1564,10 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
          uint32_t qBits = static_cast<uint32_t>(hi & 0xFFFFFFFF);
          std::memcpy(&m_curS, &sBits, 4);
          std::memcpy(&m_curT, &tBits, 4);
@@ -7784,7 +7797,7 @@ index 9281d5f..367bfdc 100644
          break;
      }
      case 0x03:
-@@ -1062,12 +1717,26 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
+@@ -1062,12 +1731,26 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
  
  void GS::writeRegister(uint8_t regAddr, uint64_t value)
  {
@@ -7811,7 +7824,7 @@ index 9281d5f..367bfdc 100644
      const bool interestingReg =
          regAddr == GS_REG_PRIM ||
          regAddr == GS_REG_RGBAQ ||
-@@ -1384,6 +2053,46 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
+@@ -1384,6 +2067,46 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
      case GS_REG_TRXDIR:
      {
          m_trxdir = static_cast<uint32_t>(value & 0x3);
@@ -7858,7 +7871,7 @@ index 9281d5f..367bfdc 100644
  
          if (m_backend)
          {
-@@ -1578,6 +2287,86 @@ void GS::vertexKick(bool drawing)
+@@ -1578,6 +2301,86 @@ void GS::vertexKick(bool drawing)
          GSPrimitiveBatch batch = buildDrawBatch(needed);
          updatePreferredDisplaySourceForDraw(batch);
          m_backend->Submit(batch);
@@ -7945,7 +7958,7 @@ index 9281d5f..367bfdc 100644
          recordDrawDebugEventUnlocked(needed);
      }
  
-@@ -1608,27 +2397,82 @@ void GS::vertexKick(bool drawing)
+@@ -1608,27 +2411,82 @@ void GS::vertexKick(bool drawing)
      }
  }
  
@@ -8028,7 +8041,7 @@ index 9281d5f..367bfdc 100644
      std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
      return m_backend ? m_backend->ConsumeLocalToHostBytes(dst, maxBytes) : 0u;
  }
-@@ -1664,12 +2508,14 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
+@@ -1664,12 +2522,14 @@ void GS::setRasterBackend(std::unique_ptr<GSRasterBackend> backend)
  
  uint32_t GS::ReadVram(uint32_t psm, uint32_t base, uint32_t bw, uint32_t x, uint32_t y) const
  {
@@ -8043,7 +8056,7 @@ index 9281d5f..367bfdc 100644
      std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
      if (m_backend)
          m_backend->WriteVram(psm, base, bw, x, y, value);
-@@ -1734,3 +2580,8 @@ void GS::updatePreferredDisplaySourceForDraw(const GSPrimitiveBatch &batch)
+@@ -1734,3 +2594,8 @@ void GS::updatePreferredDisplaySourceForDraw(const GSPrimitiveBatch &batch)
          m_hasPreferredDisplaySource = true;
      }
  }
