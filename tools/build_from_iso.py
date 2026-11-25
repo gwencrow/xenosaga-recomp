@@ -36,6 +36,8 @@ import sys
 import time
 from pathlib import Path
 
+from registrar import verify_pe
+
 PORT = Path(__file__).resolve().parents[1]
 PS2RECOMP_URL = "https://github.com/ran-j/PS2Recomp.git"
 PS2RECOMP_COMMIT = "e563698"
@@ -182,7 +184,7 @@ class Build:
         logs = sorted(self.blocks_dir.glob("*.vbl")) if self.blocks_dir.exists() else []
         if logs:
             run([self.py, PORT / "tools" / "vu1gen.py", *logs], env=self.env)
-        run([self.py, PORT / "tools" / "assemble.py"], env=self.env)
+        run([self.py, PORT / "tools" / "assemble.py", "--elf", self.gamefiles / "SLUS_204.69"], env=self.env)
 
     def compile_game(self, n=5, text="Building the game (15-30 minutes; it is fine to leave this running)"):
         step(n, text)
@@ -201,6 +203,11 @@ class Build:
         exe = self.runtime_build / "ps2xRuntime" / "ps2EntryRunner.exe"
         if not exe.exists():
             fail("the build finished without producing the game program")
+        try:
+            verify_pe(exe, self.gamefiles / "SLUS_204.69",
+                      shutil.which("objdump", path=self.env["PATH"]) or "objdump")
+        except (OSError, ValueError, subprocess.CalledProcessError) as error:
+            fail(f"Registrar preflight failed: {error}")
         self.out.mkdir(parents=True, exist_ok=True)
         target = self.out / "XenosagaRecomp.exe"
         if target.exists():

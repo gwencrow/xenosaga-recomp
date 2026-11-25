@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from registrar import elf_entry, require_export
+
 PORT = Path(__file__).resolve().parents[1]
 ROOT = PORT.parent
 SYSTEM = set("bcrypt.dll gdi32.dll kernel32.dll msvcrt.dll opengl32.dll "
@@ -31,7 +33,7 @@ def inspect_pe(path):
     return imports, exports
 
 
-def dependency_closure(exe, ffmpeg_bin):
+def dependency_closure(exe, ffmpeg_bin, entry):
     paths = {}
     exports = {}
     pending = [exe]
@@ -41,9 +43,11 @@ def dependency_closure(exe, ffmpeg_bin):
         if path in seen:
             continue
         seen.add(path)
-        imports, _ = inspect_pe(path)
-        if path == exe and not imports:
-            raise ValueError("Expected a dynamically linked runner")
+        imports, public_symbols = inspect_pe(path)
+        if path == exe:
+            require_export(exe, entry, public_symbols)
+            if not imports:
+                raise ValueError("Expected a dynamically linked runner")
         print(path.name, "imports", ", ".join(sorted(imports)))
         for dll, symbols in imports.items():
             if dll.startswith(("msys-", "cygwin")):
@@ -73,10 +77,14 @@ def main():
     parser.add_argument("--ffmpeg-bin", type=Path, default=ROOT / "deps/ffmpeg-win64/bin")
     parser.add_argument("--gamefiles", type=Path, default=ROOT / "gamefiles")
     args = parser.parse_args()
-    files = dependency_closure(args.exe.resolve(strict=True), args.ffmpeg_bin)
+    exe = args.exe.resolve(strict=True)
+    elf = args.gamefiles / "SLUS_204.69"
+    try:
+        files = dependency_closure(exe, args.ffmpeg_bin, elf_entry(elf))
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        parser.exit(1, f"Staging preflight failed: {error}\n")
     files["XenosagaRecomp.exe"] = args.exe
     files["Launch Xenosaga.bat"] = PORT / "dist/Launch Xenosaga.bat"
-    elf = args.gamefiles / "SLUS_204.69"
     if hashlib.sha1(elf.read_bytes()).hexdigest() != "fd206d5715a322830f7fa9285fb4a09276ac2a63":
         raise ValueError("Unexpected SLUS executable fingerprint")
     files[elf.name] = elf

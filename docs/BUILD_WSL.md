@@ -68,6 +68,10 @@ python3 "$XS_PORT/tools/assemble.py"
 The generator processes the main executable plus five overlays. Assembly
 refreshes the generated runtime runner sources and headers in PS2Recomp.
 Keep any hand edits outside those generated locations.
+Assembly checks the generated function table against the main ELF entry.
+If your extracted files are outside `$XS_ROOT/gamefiles`, pass the main
+ELF path to `assemble.py --elf`. The runner build checks that the assembled
+registrar still matches the validated source.
 
 ## Prepare Windows FFmpeg 7.1
 
@@ -159,7 +163,9 @@ run `python3 port/tools/stage_wsl.py runs/build-wsl-validation/ps2xRuntime/ps2En
 The final line gives the new or verified stage under `runs/`. The script checks
 x64 PE files and named imports against non-system DLL exports. Windows system
 DLLs come from the OS. The stage contains the verified private ELF, executable,
-DLLs, launcher and SHA-256 manifest. Keep it local.
+DLLs, launcher and SHA-256 manifest. The runner must include the registrar
+export for that ELF entry. Reassemble and rebuild older runners before
+staging. Keep the stage local.
 
 Use `wslpath -w <stage-path>` to get its Windows path. In Windows Command
 Prompt, set `XS_DISC` to the absolute filename of your USA ISO, run
