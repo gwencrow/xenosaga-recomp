@@ -2839,7 +2839,7 @@ index 2421f9e..6f3aaf4 100644
      void LoadClutUnlocked(const GSTex0Reg &tex0, const GSTexClutReg &texclut);
      uint32_t ReadVramUnlocked(uint32_t psm, uint32_t base, uint32_t bw, uint32_t x, uint32_t y) const;
 diff --git a/ps2xRuntime/include/runtime/gs/gs_frontend.h b/ps2xRuntime/include/runtime/gs/gs_frontend.h
-index 4c3f641..7e18dee 100644
+index 4c3f641..f0fbedb 100644
 --- a/ps2xRuntime/include/runtime/gs/gs_frontend.h
 +++ b/ps2xRuntime/include/runtime/gs/gs_frontend.h
 @@ -100,7 +100,15 @@ class GS
@@ -2897,7 +2897,7 @@ index 4c3f641..7e18dee 100644
      float m_curS = 0.0f, m_curT = 0.0f;
      uint16_t m_curU = 0, m_curV = 0;
      uint8_t m_curFog = 0;
-@@ -222,12 +238,16 @@ private:
+@@ -222,13 +238,18 @@ private:
      GSFrameReg m_preferredDisplaySourceFrame{};
      uint32_t m_preferredDisplayDestFbp = 0;
      bool m_hasPreferredDisplaySource = false;
@@ -2912,8 +2912,10 @@ index 4c3f641..7e18dee 100644
 +    uint32_t m_hostHiresWidth = 0;
 +    uint32_t m_hostHiresHeight = 0;
      bool m_hasHostPresentationFrame = false;
++    uint64_t m_lastPresentedDispfb1 = ~0ull;
      uint64_t m_nativeImageUploadCount = 0;
      uint64_t m_nativePackedGIFPacketCount = 0;
+ 
 diff --git a/ps2xRuntime/include/runtime/gs/gs_gl_backend.h b/ps2xRuntime/include/runtime/gs/gs_gl_backend.h
 new file mode 100644
 index 0000000..e044380
@@ -7006,7 +7008,7 @@ index f0ad507..7c900de 100644
      normalizePresentationAlpha(result.pixels, result.width, result.height);
      result.displayFbp = displayFrame.fbp;
 diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
-index 9281d5f..ba4a726 100644
+index 9281d5f..de5742e 100644
 --- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
 +++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
 @@ -1,14 +1,212 @@
@@ -7222,7 +7224,7 @@ index 9281d5f..ba4a726 100644
  
  namespace
  {
-@@ -105,12 +303,350 @@ namespace
+@@ -105,12 +303,344 @@ namespace
  }
  
  
@@ -7523,12 +7525,6 @@ index 9281d5f..ba4a726 100644
 +                    t_presentRequest = &request;
 +                    latchHostPresentationFrame(); // on this thread: draws and stores the frame
 +                    t_presentRequest = nullptr;
-+                    {
-+                        static uint64_t lastDispfb1 = ~0ull;
-+                        if (request.dispfb1 != lastDispfb1) // a new game frame reached the window
-+                            g_presentedFrames.fetch_add(1, std::memory_order_relaxed);
-+                        lastDispfb1 = request.dispfb1;
-+                    }
 +                    break;
 +                }
 +                }
@@ -7573,7 +7569,7 @@ index 9281d5f..ba4a726 100644
  void GS::init(uint8_t *vram, uint32_t vramSize, GSRegisters *privRegs)
  {
      m_localMemoryStorage = vram;
-@@ -124,6 +660,7 @@ void GS::init(uint8_t *vram, uint32_t vramSize, GSRegisters *privRegs)
+@@ -124,6 +654,7 @@ void GS::init(uint8_t *vram, uint32_t vramSize, GSRegisters *privRegs)
  
  void GS::reset()
  {
@@ -7581,7 +7577,7 @@ index 9281d5f..ba4a726 100644
      std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
      std::memset(m_ctx, 0, sizeof(m_ctx));
      m_prim = {};
-@@ -134,6 +671,7 @@ void GS::reset()
+@@ -134,6 +665,7 @@ void GS::reset()
      m_curB = 0x80;
      m_curA = 0x80;
      m_curQ = 1.0f;
@@ -7589,7 +7585,15 @@ index 9281d5f..ba4a726 100644
      m_curS = 0.0f;
      m_curT = 0.0f;
      m_curU = 0;
-@@ -503,6 +1041,12 @@ void GS::refreshDisplaySnapshot()
+@@ -167,6 +699,7 @@ void GS::reset()
+     }
+     {
+         std::lock_guard<std::mutex> presentationLock(m_presentationMutex);
++        m_lastPresentedDispfb1 = ~0ull;
+         m_hostPresentationFrame.clear();
+         m_hostPresentationWidth = 0u;
+         m_hostPresentationHeight = 0u;
+@@ -503,6 +1036,12 @@ void GS::refreshDisplaySnapshot()
      snapshotVRAM();
  }
  
@@ -7602,7 +7606,7 @@ index 9281d5f..ba4a726 100644
  GSPresentationRequest GS::buildPresentationRequestUnlocked() const
  {
      GSPresentationRequest request{};
-@@ -521,23 +1065,51 @@ GSPresentationRequest GS::buildPresentationRequestUnlocked() const
+@@ -521,23 +1060,51 @@ GSPresentationRequest GS::buildPresentationRequestUnlocked() const
      request.preferredSource = m_preferredDisplaySourceFrame;
      request.preferredDestFbp = m_preferredDisplayDestFbp;
      request.hasPreferredSource = m_hasPreferredDisplaySource;
@@ -7660,10 +7664,15 @@ index 9281d5f..ba4a726 100644
      }
  
      PresentationFrame frame{};
-@@ -566,6 +1138,14 @@ void GS::latchHostPresentationFrame()
+@@ -566,6 +1133,19 @@ void GS::latchHostPresentationFrame()
          m_hostPresentationSourceFbp = sourceFbp;
          m_hostPresentationUsedPreferred = usedPreferred;
          m_hasHostPresentationFrame = hasFrame;
++        if (hasFrame && request.dispfb1 != m_lastPresentedDispfb1)
++        {
++            g_presentedFrames.fetch_add(1, std::memory_order_relaxed);
++            m_lastPresentedDispfb1 = request.dispfb1;
++        }
 +        // Shared-context presentation leaves the pixels on the GPU and fills
 +        // them in only for an occasional snapshot: keep the last one.
 +        if (!frame.hiresPixels.empty() || !ps2x_glPresentShared())
