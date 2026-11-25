@@ -85,6 +85,8 @@ Automatic tuning is skipped when no training recording is available. For better 
 
 If the standard Windows build tools fail to install, see the alternative [WSL2 build guide](docs/BUILD_WSL.md).
 
+The standard Windows launcher installation has not yet been fully validated on a clean system.
+
 Your original disc image is required to play.
 
 ## Controls
@@ -118,7 +120,9 @@ Graphics, audio, and gameplay options can be configured through `settings.ini` n
 - Low frame rates in demanding areas and cutscenes.
 - Audio desynchronization during in-engine cutscenes.
 - Occasional texture, shadow, and geometry artifacts.
-- Screen shaking in some scenes at native resolution.
+- Residual vertical shaking at higher internal resolutions ([#21](https://github.com/gwencrow/xenosaga-recomp/issues/21)).
+- Flickering and bottom-edge artifacts in pre-rendered cutscenes ([#20](https://github.com/gwencrow/xenosaga-recomp/issues/20)).
+- Corrupted save thumbnails ([#22](https://github.com/gwencrow/xenosaga-recomp/issues/22)).
 - Stretched HUD and menus in widescreen mode.
 - Limited hardware compatibility testing.
 
