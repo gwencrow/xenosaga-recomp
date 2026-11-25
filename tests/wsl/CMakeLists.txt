@@ -41,3 +41,11 @@ foreach(workers 1 8)
     set_tests_properties(port.gs_triangle_${workers}_worker PROPERTIES
         ENVIRONMENT "PS2X_GS_THREADS=${workers}")
 endforeach()
+
+add_executable(xs_gs_presentation_fps_test gs_presentation_fps_test.cpp)
+target_link_libraries(xs_gs_presentation_fps_test PRIVATE ps2_gs_cache_backend_under_test)
+foreach(workers 1 8)
+    add_test(NAME port.gs_presentation_fps_${workers}_worker COMMAND xs_gs_presentation_fps_test)
+    set_tests_properties(port.gs_presentation_fps_${workers}_worker PROPERTIES
+        ENVIRONMENT "PS2X_GS_THREADS=${workers}")
+endforeach()
