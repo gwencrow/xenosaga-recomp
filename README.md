@@ -127,6 +127,7 @@ Graphics, audio, and gameplay options can be configured through `settings.ini` n
 - [ ] Stable 30 FPS gameplay
 - [ ] Further native VU1 optimization
 - [ ] GS rendering optimization
+- [ ] Evaluate an optional Vulkan graphics backend using paraLLEl-GS ([#23](https://github.com/gwencrow/xenosaga-recomp/issues/23))
 - [ ] Graphics accuracy improvements
 - [ ] Audio synchronization fixes
 - [ ] Improved widescreen support
