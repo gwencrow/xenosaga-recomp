@@ -14,3 +14,11 @@ add_test(NAME port.iso_lookup COMMAND xs_iso_test)
 add_executable(xs_gs_present_test gs_present_test.cpp)
 target_link_libraries(xs_gs_present_test PRIVATE ps2_gs_cache_backend_under_test)
 add_test(NAME port.gs_field_presentation COMMAND xs_gs_present_test)
+
+add_executable(xs_gs_q_latch_test gs_q_latch_test.cpp)
+target_link_libraries(xs_gs_q_latch_test PRIVATE ps2_gs_cache_backend_under_test)
+foreach(workers 1 8)
+    add_test(NAME port.gs_q_latch_${workers}_worker COMMAND xs_gs_q_latch_test)
+    set_tests_properties(port.gs_q_latch_${workers}_worker PROPERTIES
+        ENVIRONMENT "PS2X_GS_THREADS=${workers}")
+endforeach()
