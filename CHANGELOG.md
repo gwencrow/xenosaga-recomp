@@ -44,7 +44,7 @@ These results represent one recorded route with one paired trial per resolution,
 ### Known limitations
 
 - Mild title-screen shaking at 3x was visible in both the original and corrected presentation modes.
-- The corrected 1x build showed mild flicker and bottom-edge artifacts in pre-rendered cutscenes. The original 1x behavior for those scenes has yet to be confirmed.
+- Mild flickering and bottom-edge artifacts in pre-rendered cutscenes remain unresolved. Bottom-edge artifacts were observed with both original and corrected native-resolution presentation.
 - Demanding scenes remain below the 30 FPS target.
 - In-engine cutscenes can exhibit significant audio desynchronization.
 - Seven existing GS regression tests remain unresolved.

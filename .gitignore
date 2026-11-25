@@ -54,3 +54,8 @@ mc1/
 route-recorded.txt
 xenosaga_vu1_blocks.cpp
 xenosaga_vu1_programs.cpp
+
+# Private ordered graphics captures
+*.gsc2
+*.gsc2.zst
+*.vram
