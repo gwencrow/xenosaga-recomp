@@ -2,6 +2,49 @@
 
 Notable changes to Xenosaga Episode I: Recompiled are recorded here. This project is still in development and does not yet have a stable release.
 
+## 2026-11-26
+
+### Development validation
+
+- Successfully compiled and tested a fresh Windows runtime incorporating the merged November 25 corrections.
+- Confirmed functional OpenGL gameplay and normal shutdown in attended baseline testing.
+- Reproduced residual character-shadow streaking in the OpenGL renderer at native and 3x internal resolution.
+- Observed native-resolution game FPS samples ranging from 16.4 to 28.8 on an Intel Core i9-13900K and NVIDIA RTX 4090.
+
+### Experimental research
+
+- Extended standalone paraLLEl-GS Vulkan validation on Linux and native Windows using NVIDIA hardware.
+- Demonstrated genuine 2x per-axis internal GS rasterization and 2x output with additional antialiasing in controlled test workloads.
+- Identified and tested a correction for resource allocation when requested sample counts exceed device capabilities.
+- Identified potential performance improvements through persistent GS state and reduced unnecessary synchronization and readback.
+- Continued investigation of native VU1 dispatch, interpreter fallback, CPU-side execution overhead and VIF1 synchronization.
+
+Vulkan gameplay integration remains experimental and is not yet available in the public runtime. Outstanding cross-device rendering differences require further validation. Standalone renderer measurements do not establish whole-game performance improvements.
+
+Related issues: [#6](https://github.com/gwencrow/xenosaga-recomp/issues/6), [#7](https://github.com/gwencrow/xenosaga-recomp/issues/7), [#11](https://github.com/gwencrow/xenosaga-recomp/issues/11), [#23](https://github.com/gwencrow/xenosaga-recomp/issues/23).
+
+## 2026-11-25
+
+### Runtime
+
+- Corrected PACKED GIF Q latching, preserving the distinction between the GIF unpacker's internal Q value and the GS vertex latch. ([#29](https://github.com/gwencrow/xenosaga-recomp/pull/29))
+- Corrected asynchronous GS presentation ordering. Menu flashing was eliminated in the tested configurations. ([#30](https://github.com/gwencrow/xenosaga-recomp/pull/30))
+- Corrected integer triangle rasterization coverage in the CPU renderer, preserving fractional vertex coordinates and consistent edge ownership. ([#31](https://github.com/gwencrow/xenosaga-recomp/pull/31))
+- Corrected GS presentation FPS counting in synchronous and asynchronous modes. This is an instrumentation correction rather than a rendering performance optimization. ([#32](https://github.com/gwencrow/xenosaga-recomp/pull/32))
+
+### Build and testing
+
+- Added generated function registrar validation to assembly, build, installation and staging workflows. ([#28](https://github.com/gwencrow/xenosaga-recomp/pull/28))
+- Expanded regression coverage for GIF Q latching, triangle rasterization, presentation ordering and FPS counting.
+- The integrated host regression suite passed 50 of 57 tests, with seven previously identified GS failures remaining unchanged.
+- All 12 port-specific host checks and seven registrar regression tests passed.
+
+### Known limitations
+
+- Existing GS texture visibility, CLUT caching and memory alias regression failures remain unresolved.
+- CPU triangle coverage improvements do not establish complete hardware rasterization equivalence.
+- Broader gameplay validation remains necessary.
+
 ## 2026-11-24
 
 ### Runtime
