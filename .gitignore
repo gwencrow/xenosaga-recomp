@@ -59,3 +59,12 @@ xenosaga_vu1_programs.cpp
 *.gsc2
 *.gsc2.zst
 *.vram
+
+# Private Vulkan GS capture and replay artifacts
+*.xgsr
+*.xgsr.zst
+
+# Private test results and staged candidates
+/results/
+/windows-stage/
+/hardware-validation/

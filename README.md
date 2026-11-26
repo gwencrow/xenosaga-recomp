@@ -187,7 +187,10 @@ Do not upload game files, generated game code, memory dumps, or other proprietar
 
 ## Image Credits
 
-Gameplay screenshots show Xenosaga Episode I and are included to document the port. The underlying game imagery belongs to its respective rights holders. The custom banner incorporates third-party stock imagery under its applicable licenses. Third-party imagery is not covered by the software GPLv3 license.
+- Gameplay screenshots show Xenosaga Episode I and are included to document the port. The underlying game imagery belongs to its respective rights holders.
+- The banner incorporates [Blue gas giant](https://commons.wikimedia.org/wiki/File:Blue_gas_giant.png) by [unnamed](https://opengameart.org/users/unnamed), originally published in the [16 Planet Sprites](https://opengameart.org/content/16-planet-sprites) collection on OpenGameArt. The planet artwork is dedicated to the public domain under [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/) and has been adapted for the project banner.
+
+Third-party imagery retains its respective copyright and licensing status and is not relicensed under the software GPLv3 license.
 
 ## License
 
