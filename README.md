@@ -144,6 +144,10 @@ The port uses static recompilation to translate the original PS2 executable and 
 
 It currently targets PS2Recomp commit `e563698` with the modifications in `patches/ps2recomp-runtime.patch`.
 
+The [Xenosaga Episode I decompilation project](https://github.com/OpokXeno/xsg-i-decomp) serves as a technical reference for understanding the original game's architecture, function symbols, rendering pipeline, audio systems, and game-specific behavior. Its use as a reference has been [authorized by the project owner](https://github.com/OpokXeno/xsg-i-decomp/issues/74#issuecomment-7188213847), with attribution.
+
+The recompilation and decompilation projects are independent. Recovered game source code is not incorporated into or distributed with this repository.
+
 | Directory | Contents |
 |---|---|
 | `src/` | Game-specific hooks and overrides |
@@ -177,6 +181,7 @@ Do not upload game files, generated game code, memory dumps, or other proprietar
 ## Credits
 
 - [BeyondNeteros](https://github.com/BeyondNeteros): Original port development
+- [OpokXeno and contributors](https://github.com/OpokXeno/xsg-i-decomp): Xenosaga Episode I decompilation, technical documentation, and reverse-engineering research.
 - [PS2Recomp](https://github.com/ran-j/PS2Recomp): Recompilation framework
 - [FFmpeg](https://ffmpeg.org/): Multimedia decoding
 
