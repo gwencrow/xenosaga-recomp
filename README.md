@@ -150,7 +150,10 @@ It currently targets PS2Recomp commit `e563698` with the modifications in `patch
 | `tools/` | Build and diagnostic utilities |
 | `patches/` | PS2Recomp runtime modifications |
 | `launcher/` | Windows launcher |
-| `dist/` | Runtime launch scripts |
+| `dist/` | Runtime launch script |
+| `tests/` | Unit tests and host-side regression tests |
+| `cmake/` | CMake toolchain configuration for Windows cross-compilation |
+| `docs/` | Development documentation and project images |
 
 ### Developer Documentation
 
