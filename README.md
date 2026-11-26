@@ -187,7 +187,7 @@ Do not upload game files, generated game code, memory dumps, or other proprietar
 
 ## Image Credits
 
-Gameplay screenshots show Xenosaga Episode I and are included to document the port. The underlying game imagery belongs to its respective rights holders. The custom banner incorporates third-party stock imagery under its applicable licenses. Third-party imagery is not covered by the software GPLv3 license.
+Gameplay screenshots show Xenosaga Episode I and are included to document the port. The underlying game imagery belongs to its respective rights holders. The custom banner incorporates a [science-fiction planet image sourced from PNGAAA](https://www.pngaaa.com/detail/598072), listed by the source website for non-commercial use. Original artwork rights remain with their respective holders. Third-party imagery is not covered by the software GPLv3 license.
 
 ## License
 
