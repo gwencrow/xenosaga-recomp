@@ -39,6 +39,22 @@ if [[ -n ${FETCH_SOURCES:-} ]]; then
         args+=("-DFETCHCONTENT_SOURCE_DIR_${dep^^}=$dir")
     done
 fi
+# FFMPEG_DEFINE_PREFIX=1: resolve FFmpeg headers/libraries under FFMPEG_PREFIX instead of the absolute
+# includedir/libdir recorded in its .pc files (needed when the tree was copied from another checkout).
+if [[ ${FFMPEG_DEFINE_PREFIX:-0} == 1 ]]; then
+    args+=("-DPKG_CONFIG_ARGN=--define-variable=includedir=$prefix/include;--define-variable=libdir=$prefix/lib")
+fi
+# Optional Vulkan GS device (renderer = vulkan): PGS_SOURCE names a paraLLEl-GS checkout with its
+# Granite submodules, prepared by tools/setup_parallel_gs.sh (pinned revision + patches/parallel-gs.patch).
+# Unset keeps the build identical to the OpenGL/CPU-only configuration.
+if [[ -n ${PGS_SOURCE:-} ]]; then
+    pgs=$(realpath -e "$PGS_SOURCE")
+    [[ -s $pgs/CMakeLists.txt && -s $pgs/Granite/third_party/volk/volk.c ]] || { echo "Incomplete paraLLEl-GS checkout: $pgs" >&2; exit 1; }
+    if ! patch -d "$pgs" -p1 -R --dry-run -s -f < "$port/patches/parallel-gs.patch" >/dev/null; then
+        echo "paraLLEl-GS checkout lacks patches/parallel-gs.patch; run tools/setup_parallel_gs.sh" >&2; exit 1
+    fi
+    args+=(-DPS2X_ENABLE_PGS=ON "-DPS2X_PGS_SOURCE_DIR=$pgs")
+fi
 cmake -S "$src" -B "$build" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE:FILEPATH="$port/cmake/mingw-w64-x86_64.cmake" \
     -DCMAKE_FIND_ROOT_PATH="$prefix" -DCMAKE_BUILD_TYPE=Release \
