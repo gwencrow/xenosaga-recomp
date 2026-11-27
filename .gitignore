@@ -69,3 +69,9 @@ xenosaga_vu1_programs.cpp
 /windows-stage/
 /hardware-validation/
 xs_frames/
+
+# Private engineering and VU1 capture artifacts
+/knowledge/
+/reports/
+/references/
+*.xvu1
