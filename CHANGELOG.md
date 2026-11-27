@@ -2,6 +2,13 @@
 
 Notable changes to Xenosaga Episode I: Recompiled are recorded here. This project is still in development and does not yet have a stable release.
 
+## Unreleased
+
+### Runtime
+
+- Fixed silent truncation of DMA source chains exceeding 4,096 tags, which could cause persistent texture and UI corruption or gameplay stalls. DMA traversal now continues to the terminating tag, with cycle detection and bounded safety guards.
+- Validated the isolated DMA correction through 34 regression checks, sanitizer testing and native Windows OpenGL gameplay. The previously observed Woglinde graphical corruption was not reproduced, and 22 long DMA chains completed without reported truncation.
+
 ## 2026-11-26
 
 ### Development validation

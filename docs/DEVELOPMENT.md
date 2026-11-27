@@ -38,6 +38,7 @@ Xenosaga Episode I Recompiled uses PS2Recomp to translate the USA release
 | Overlay loading | `src/xenosaga_overlays.cpp` hooks `xglCdLoadOverlay`. The overlays share guest load address `0xA00000`. The hook switches to the corresponding generated function table, whose symbols are prefixed with `xs_ovNN_`. |
 | Disc access | `src/xenosaga_disc.cpp` handles the game's sector-based disc access. `src/xenosaga_iso.h` provides ISO 9660 lookup. |
 | Runtime | The PS2Recomp patch covers EE scheduling, memory and DMA, VIF/VU1, GIF/GS, and device emulation. Work within the patched source and trace both the guest entry point and any host workers it dispatches. |
+| DMA chains | `ps2_memory.cpp` walks VIF1/GIF source chains to their terminating tag. Endless chains are stopped by a cycle proof or a 256 MiB host guard, and both are reported. |
 | Guest and renderer diagnostics | `src/xenosaga_debug.cpp` supplies the heartbeat. It reports guest thread PCs, VU and GS timing, and display state. The captured `xs_frame.bmp` can help inspect rendering failures. |
 | VU0 calls | The recompiler patch translates `VCALLMSR` using `ctx->vu0_cmsar0`. Check generated code as well as the translator when diagnosing VU0 macro-mode calls. |
 

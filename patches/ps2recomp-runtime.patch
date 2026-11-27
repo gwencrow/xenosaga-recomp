@@ -2484,7 +2484,10 @@ index 589d768..72e3eee 100644
  set(RUNNER_MAIN_CPP "${CMAKE_CURRENT_SOURCE_DIR}/src/runner/main.cpp")
  set(ROOT_MAIN_CPP "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
  
-@@ -465,3 +475,12 @@ endif()
+@@ -462,6 +472,15 @@ else()
+     )
+ endif()
+ 
 +# Check every runner build, including incremental builds and the upstream
 +# placeholder, without requiring a game for runtime library or test targets.
 +add_custom_target(xs_verify_registrar
@@ -2619,6 +2622,24 @@ index 92ef0d5..d24ec97 100644
          set_property(TARGET ${TargetName} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
      else()
          message(WARNING "Interprocedural optimization not supported: ${ipo_error}")
+diff --git a/ps2xRuntime/cmake/verify_xenosaga_registrar.cmake b/ps2xRuntime/cmake/verify_xenosaga_registrar.cmake
+new file mode 100644
+index 0000000..3930249
+--- /dev/null
++++ b/ps2xRuntime/cmake/verify_xenosaga_registrar.cmake
+@@ -0,0 +1,12 @@
++set(registrar "${runner_dir}/register_functions.cpp")
++set(receipt "${runner_dir}/register_functions.sha256")
++set(recovery "Run tools/assemble.py with the generated main ELF and function sources.")
++if(NOT EXISTS "${registrar}" OR NOT EXISTS "${receipt}")
++    message(FATAL_ERROR "Missing validated Xenosaga registrar in ${runner_dir}. ${recovery}")
++endif()
++file(READ "${receipt}" expected)
++string(STRIP "${expected}" expected)
++file(SHA256 "${registrar}" actual)
++if(NOT actual STREQUAL expected)
++    message(FATAL_ERROR "Xenosaga registrar changed after validation in ${runner_dir}. ${recovery}")
++endif()
 diff --git a/ps2xRuntime/include/ps2_runtime.h b/ps2xRuntime/include/ps2_runtime.h
 index 4b9242c..3c96b6f 100644
 --- a/ps2xRuntime/include/ps2_runtime.h
@@ -2986,7 +3007,7 @@ index 836a3ff..d7b63b4 100644
      bool hasPreferredSource = false;
 +    bool fullFramePresentation = false;
  };
-
+ 
  struct PresentationFrame
 @@ -298,6 +299,11 @@ struct PresentationFrame
      uint32_t displayFbp = 0;
@@ -3403,7 +3424,7 @@ index 67c8184..90278a3 100644
      std::array<uint64_t, 16> m_viLatestWrite{};
      std::array<uint64_t, 4> m_accLatestWrite{};
 @@ -242,7 +357,11 @@ private:
-
+ 
      void run(uint8_t *vuCode, uint32_t codeSize,
               uint8_t *vuData, uint32_t dataSize,
 -             GS &gs, PS2Memory *memory, uint32_t maxCycles);
@@ -3412,7 +3433,7 @@ index 67c8184..90278a3 100644
 +    bool runScheduled(uint8_t *vuCode, uint32_t codeSize, uint8_t *vuData, uint32_t dataSize,
 +                      GS &gs, PS2Memory *memory, uint64_t budgetEnd, bool decodeCacheReady,
 +                      bool fastWrites, bool staticBlocks, ReplayDispatch *replay, const uint16_t *regionEnds = nullptr);
-
+ 
      InstructionUsage decodeUpperUsage(uint32_t upper) const;
      InstructionUsage decodeLowerUsage(uint32_t lower) const;
 @@ -250,10 +369,29 @@ private:
@@ -10805,7 +10826,7 @@ index 0000000..520d1cc
 +    }
 +}
 diff --git a/ps2xRuntime/src/lib/ps2_memory.cpp b/ps2xRuntime/src/lib/ps2_memory.cpp
-index 37b6a4d..e3c9784 100644
+index 37b6a4d..39b193a 100644
 --- a/ps2xRuntime/src/lib/ps2_memory.cpp
 +++ b/ps2xRuntime/src/lib/ps2_memory.cpp
 @@ -1,4 +1,9 @@
@@ -11230,7 +11251,8 @@ index 37b6a4d..e3c9784 100644
      if (address >= 0x10002000 && address <= 0x10002030)
      {
 -        if (address == 0x10002010)
--        {
++        if (address == 0x10002000)
+         {
 -            m_ioRegisters[address] = value & ~(1u << 31);
 -            if (value & (1u << 30))
 -            {
@@ -11240,8 +11262,7 @@ index 37b6a4d..e3c9784 100644
 -            }
 -        }
 -        else
-+        if (address == 0x10002000)
-         {
+-        {
 -            m_ioRegisters[address] = value;
 +            m_ipu->writeCmd(value);
 +            ipuServiceFromDma();
@@ -11298,7 +11319,45 @@ index 37b6a4d..e3c9784 100644
                      if (qwCount == 0)
                          return;
                      const bool scratch = isScratchpad(srcAddr);
-@@ -1349,6 +1700,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1344,11 +1695,44 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+                     uint32_t asr1 = m_ioRegisters[channelBase + 0x50];
+                     uint32_t asp = (chcr >> 4) & 0x3u;
+                     const bool tieEnabled = (chcr & (1u << 7)) != 0u;
+-                    const int kMaxChainTags = 4096;
++                    // The DMAC has no tag limit, and this runtime completes a kick before the
++                    // guest can observe the channel again (CHCR reads report STR clear). The walk
++                    // therefore runs to the terminating tag (END, REFE, RET with ASP 0, IRQ with
++                    // TIE). Previously it stopped after 4096 tags, delivered a partial chain and
++                    // still reported completion; that cut the game's per-frame VIF1 packet and
++                    // left PATH2 mid-packet (a corrupted, frozen Woglinde battle-training exit).
++                    // Only two conditions end a walk early, both reported:
++                    //  - a proven endless chain: the walk is a pure function of (TADR, ASP, ASR0,
++                    //    ASR1) over unchanging memory, so a repeated state means it never ends
++                    //    (Brent's cycle detection, constant memory);
++                    //  - a host-memory guard on the bytes gathered for one kick.
++                    static const uint64_t kChainByteCeiling = []() {
++                        const char *e = std::getenv("PS2X_DMA_CHAIN_MAX_MB");
++                        const uint64_t mb = (e && std::atoi(e) > 0) ? uint64_t(std::atoi(e)) : 256u;
++                        return mb << 20;
++                    }();
++                    struct WalkState
++                    {
++                        uint32_t tadr, asp, asr0, asr1;
++                        bool operator==(const WalkState &o) const
++                        {
++                            return tadr == o.tadr && asp == o.asp && asr0 == o.asr0 && asr1 == o.asr1;
++                        }
++                    };
++                    // ASR values above ASP are dead (overwritten before use); zero them so they
++                    // cannot hide a repeated state.
++                    const auto walkState = [&](uint32_t t) {
++                        return WalkState{t, asp, asp >= 1u ? asr0 : 0u, asp >= 2u ? asr1 : 0u};
++                    };
++                    WalkState brentSaved = walkState(dmaAddr(tagAddr));
++                    uint64_t brentPower = 1u, brentLength = 0u;
++                    enum class WalkStop { Terminated, Cycle, ByteCeiling, BadTagAddress };
++                    WalkStop walkStop = WalkStop::Terminated;
+                     std::vector<uint8_t> chainBuf;
  
                      auto appendData = [&](uint32_t srcAddr, uint32_t qwCount)
                      {
@@ -11306,15 +11365,40 @@ index 37b6a4d..e3c9784 100644
                          const uint64_t bytes64 = static_cast<uint64_t>(qwCount) * 16ull;
                          uint32_t bytes = (bytes64 > 0xFFFFFFFFull) ? 0xFFFFFFFFu : static_cast<uint32_t>(bytes64);
                          const bool scratch = isScratchpad(srcAddr);
-@@ -1407,6 +1759,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1402,11 +1786,12 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+                         channelBase == 0x10009000u || channelBase == 0x10008000u;
+                     const bool transferTagData = isVifChannel && (chcr & 0x40u) != 0u;
  
-                     while (tagsProcessed < kMaxChainTags)
+-                    int tagsProcessed = 0;
++                    uint64_t tagsProcessed = 0;
+                     uint32_t lastTagUpper = (chcr >> 16) & 0xFFFFu;
+ 
+-                    while (tagsProcessed < kMaxChainTags)
++                    for (;;)
                      {
 +                        tagAddr = dmaAddr(tagAddr);
                          const uint32_t currentTagAddr = tagAddr;
                          const bool tagInSPR = isScratchpad(tagAddr);
                          uint32_t physTag = 0;
-@@ -1438,7 +1791,18 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1416,6 +1801,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+                         }
+                         catch (...)
+                         {
++                            walkStop = WalkStop::BadTagAddress;
+                             break;
+                         }
+                         const uint8_t *tagBase;
+@@ -1431,14 +1817,28 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+                             tagMax = PS2_RAM_SIZE;
+                         }
+                         if (physTag + 16 > tagMax)
++                        {
++                            walkStop = WalkStop::BadTagAddress;
+                             break;
++                        }
+ 
+                         const uint8_t *tp = tagBase + physTag;
+                         uint64_t tag = loadScalar<uint64_t>(tp, 0, 16, "dma chain tag", tagAddr);
                          uint16_t tagQwc = static_cast<uint16_t>(tag & 0xFFFF);
                          uint32_t id = static_cast<uint32_t>((tag >> 28) & 0x7);
                          const bool irq = ((tag >> 31) & 0x1ull) != 0ull;
@@ -11334,8 +11418,28 @@ index 37b6a4d..e3c9784 100644
                          lastTagUpper = static_cast<uint32_t>((tag >> 16) & 0xFFFFu);
                          ++tagsProcessed;
  
-@@ -1521,6 +1885,16 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+@@ -1519,8 +1919,70 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+                             endChain = true;
+                         if (endChain)
                              break;
++
++                        const WalkState next = walkState(dmaAddr(tagAddr));
++                        if (next == brentSaved)
++                        {
++                            walkStop = WalkStop::Cycle;
++                            break;
++                        }
++                        if (++brentLength == brentPower)
++                        {
++                            brentSaved = next;
++                            brentPower <<= 1u;
++                            brentLength = 0u;
++                        }
++                        if (chainBuf.size() > kChainByteCeiling)
++                        {
++                            walkStop = WalkStop::ByteCeiling;
++                            break;
++                        }
                      }
  
 +                    {
@@ -11343,15 +11447,49 @@ index 37b6a4d..e3c9784 100644
 +                        if (logBudget > 0 && channelBase == 0x1000A000u && (m_ioRegisters[channelBase + 0x30] & 0x80000000u))
 +                        {
 +                            --logBudget;
-+                            std::printf("[gif-chain] tags=%d bytes=%zu end tadr=0x%08x first=%016llx%016llx\n", tagsProcessed, chainBuf.size(), tagAddr,
++                            std::printf("[gif-chain] tags=%llu bytes=%zu end tadr=0x%08x first=%016llx%016llx\n", (unsigned long long)tagsProcessed, chainBuf.size(), tagAddr,
 +                                        chainBuf.size() >= 16 ? (unsigned long long)loadScalar<uint64_t>(chainBuf.data(), 8u, 16u, "x", 0u) : 0ull,
 +                                        chainBuf.size() >= 16 ? (unsigned long long)loadScalar<uint64_t>(chainBuf.data(), 0u, 16u, "x", 0u) : 0ull);
 +                        }
 +                    }
++                    if (walkStop != WalkStop::Terminated)
++                    {
++                        // An endless or unreadable chain. The model cannot keep a channel
++                        // running, so what was gathered is delivered and the kick completes as
++                        // before; the condition is never silent.
++                        static std::atomic<uint64_t> badChains{0};
++                        const uint64_t n = badChains.fetch_add(1, std::memory_order_relaxed) + 1;
++                        if (n <= 20 || (n % 1000) == 0)
++                            std::fprintf(stderr, "[dma] chain on channel 0x%08x did not terminate: %s after %llu tags "
++                                                 "(tag 0x%08x, %zu bytes gathered) #%llu\n",
++                                         channelBase,
++                                         walkStop == WalkStop::Cycle ? "endless cycle proven"
++                                         : walkStop == WalkStop::ByteCeiling ? "host byte ceiling reached"
++                                                                             : "tag address outside guest memory",
++                                         (unsigned long long)tagsProcessed, tagAddr, chainBuf.size(), (unsigned long long)n);
++                    }
++                    else if (tagsProcessed > 4096u)
++                    {
++                        // Chains the former walker truncated at 4096 tags (reported so trials show
++                        // the corrected path is exercised).
++                        static std::atomic<uint64_t> longChains{0};
++                        static std::atomic<uint64_t> longest{0};
++                        const uint64_t n = longChains.fetch_add(1, std::memory_order_relaxed) + 1;
++                        uint64_t prev = longest.load(std::memory_order_relaxed);
++                        bool record = false;
++                        while (tagsProcessed > prev && !(record = longest.compare_exchange_weak(prev, tagsProcessed)))
++                        {
++                        }
++                        if (n <= 20 || (n % 1000) == 0 || record)
++                            std::fprintf(stderr, "[dma] long chain on channel 0x%08x walked to its end: %llu tags, %zu bytes "
++                                                 "(beyond the former 4096-tag limit) #%llu%s\n",
++                                         channelBase, (unsigned long long)tagsProcessed, chainBuf.size(),
++                                         (unsigned long long)n, record ? " (longest so far)" : "");
++                    }
                      m_ioRegisters[channelBase + 0x30] = tagAddr;
                      m_ioRegisters[channelBase + 0x40] = asr0;
                      m_ioRegisters[channelBase + 0x50] = asr1;
-@@ -1662,6 +2036,8 @@ void PS2Memory::completeDmacChannel(uint32_t channelBase, uint32_t cause)
+@@ -1662,6 +2124,8 @@ void PS2Memory::completeDmacChannel(uint32_t channelBase, uint32_t cause)
  
  void PS2Memory::processPendingTransfers()
  {
@@ -11360,7 +11498,7 @@ index 37b6a4d..e3c9784 100644
      const bool hadGif = !m_pendingGifTransfers.empty();
      uint32_t observedGifQwc = 0u;
      for (const auto &transfer : m_pendingGifTransfers)
-@@ -1801,7 +2177,39 @@ void PS2Memory::processPendingTransfers()
+@@ -1801,7 +2265,39 @@ void PS2Memory::processPendingTransfers()
      }
      m_pendingVif0Transfers.clear();
  
@@ -11401,7 +11539,7 @@ index 37b6a4d..e3c9784 100644
      for (auto &p : m_pendingVif1Transfers)
      {
          if (!p.chainData.empty())
-@@ -1859,7 +2267,7 @@ void PS2Memory::processPendingTransfers()
+@@ -1859,7 +2355,7 @@ void PS2Memory::processPendingTransfers()
      }
      m_pendingVif1Transfers.clear();
  
@@ -11410,7 +11548,7 @@ index 37b6a4d..e3c9784 100644
          m_gifArbiter->drain();
  
      static constexpr uint32_t GIF_CHANNEL = 0x1000A000;
-@@ -1958,13 +2366,12 @@ void PS2Memory::submitGifPacket(GifPathId pathId, const uint8_t *data, uint32_t
+@@ -1958,13 +2454,12 @@ void PS2Memory::submitGifPacket(GifPathId pathId, const uint8_t *data, uint32_t
          flushMaskedPath3Packets(false);
      }
  
@@ -11427,7 +11565,7 @@ index 37b6a4d..e3c9784 100644
  }
  
  void PS2Memory::processGIFPacket(uint32_t srcPhysAddr, uint32_t qwCount)
-@@ -2280,6 +2687,35 @@ int PS2Memory::pollDmaRegisters()
+@@ -2280,6 +2775,35 @@ int PS2Memory::pollDmaRegisters()
  
  uint32_t PS2Memory::readIORegister(uint32_t address)
  {
@@ -11463,7 +11601,7 @@ index 37b6a4d..e3c9784 100644
      size_t timerIndex = 0u;
      uint32_t timerOffset = 0u;
      if (decodeEeTimerRegister(address, timerIndex, timerOffset))
-@@ -2302,6 +2738,17 @@ uint32_t PS2Memory::readIORegister(uint32_t address)
+@@ -2302,6 +2826,17 @@ uint32_t PS2Memory::readIORegister(uint32_t address)
  
      if (isGsPrivReg(address))
      {
@@ -11481,7 +11619,7 @@ index 37b6a4d..e3c9784 100644
          // NB: unreachable from read8/16/32/64 today, same reasoning as the write
          // path above; kept correct for direct callers.
          const uint32_t off = address & 7u;
-@@ -2319,26 +2766,22 @@ uint32_t PS2Memory::readIORegister(uint32_t address)
+@@ -2319,26 +2854,22 @@ uint32_t PS2Memory::readIORegister(uint32_t address)
  
      if (address >= 0x10002000 && address <= 0x10002030)
      {
@@ -13796,7 +13934,7 @@ index f19e281..29c6d38 100644
 +    m_cycle = state.cycles;
 +    resetScheduler();
  }
-
+ 
  float VU1Interpreter::normalizeResult(float value, uint32_t &laneFlags) const
 @@ -194,15 +212,84 @@ void VU1Interpreter::applyDestAcc(const float *result, uint8_t dest)
      applyDest(m_state.acc, result, dest);
@@ -15247,7 +15385,7 @@ index f19e281..29c6d38 100644
 +        }
 +    } g_vu1Stats;
  }
-
+ 
 +namespace
 +{
 +    struct RegisteredProgram
@@ -16805,21 +16943,490 @@ index 0000000..9af84db
 +    std::printf("checksum: %016llx\n", (unsigned long long)checksum);
 +    return 0;
 +}
-diff --git a/ps2xRuntime/cmake/verify_xenosaga_registrar.cmake b/ps2xRuntime/cmake/verify_xenosaga_registrar.cmake
+diff --git a/ps2xTest/CMakeLists.txt b/ps2xTest/CMakeLists.txt
+index 3eaa8b3..7e7c15f 100644
+--- a/ps2xTest/CMakeLists.txt
++++ b/ps2xTest/CMakeLists.txt
+@@ -104,3 +104,8 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebI
+     EnableFastReleaseMode(ps2_test_lib)
+     EnableFastReleaseMode(ps2x_tests)
+ endif()
++
++# VIF1/GIF/VIF0 DMA chain traversal (tag limit, continuation, CALL/RET, TTE, cycles, PATH2 integrity).
++add_executable(a06_dma_chain_tests a06/dma_chain_tests.cpp)
++target_include_directories(a06_dma_chain_tests PRIVATE ${CMAKE_SOURCE_DIR}/ps2xRuntime/include)
++target_link_libraries(a06_dma_chain_tests PRIVATE ps2_runtime)
+diff --git a/ps2xTest/a06/dma_chain_tests.cpp b/ps2xTest/a06/dma_chain_tests.cpp
 new file mode 100644
-index 0000000..3930249
+index 0000000..b93a480
 --- /dev/null
-+++ b/ps2xRuntime/cmake/verify_xenosaga_registrar.cmake
-@@ -0,0 +1,12 @@
-+set(registrar "${runner_dir}/register_functions.cpp")
-+set(receipt "${runner_dir}/register_functions.sha256")
-+set(recovery "Run tools/assemble.py with the generated main ELF and function sources.")
-+if(NOT EXISTS "${registrar}" OR NOT EXISTS "${receipt}")
-+    message(FATAL_ERROR "Missing validated Xenosaga registrar in ${runner_dir}. ${recovery}")
-+endif()
-+file(READ "${receipt}" expected)
-+string(STRIP "${expected}" expected)
-+file(SHA256 "${registrar}" actual)
-+if(NOT actual STREQUAL expected)
-+    message(FATAL_ERROR "Xenosaga registrar changed after validation in ${runner_dir}. ${recovery}")
-+endif()
++++ b/ps2xTest/a06/dma_chain_tests.cpp
+@@ -0,0 +1,468 @@
++// DMA source-chain traversal (VIF1 channel 0x10009000, GIF channel 0x1000A000) as seen by the
++// GIF paths, through PS2Memory's real kick path (D1_TADR/CHCR writes, async VIF1 worker).
++//
++// Properties checked against an independent model of the DMAC tag semantics:
++//  - a valid chain is transferred completely, however many tags it has (the former walker stopped at
++//    4096 tags, dropped the rest and still reported completion);
++//  - after the kick, TADR points past the terminating tag and the channel completed (CIS set);
++//  - a GIF packet whose DIRECT spans DMA tags across the old limit leaves PATH2 at a packet boundary,
++//    so the next kick's GIFtag is parsed as a tag (formerly it was parsed as payload: desynchronization);
++//  - CALL/RET nesting, repeated references, TTE, REFE/RET(ASP 0)/IRQ+TIE/END termination, scratchpad
++//    addressing, GIF-channel (PATH3) chains;
++//  - malformed chains terminate: endless NEXT/CALL cycles and out-of-range tag addresses.
++// No GPU needed. Exit 0 = all checks pass.
++#include "ps2_runtime.h"
++#include "runtime/gs/ps2_gif_arbiter.h"
++#include "runtime/ps2_memory.h"
++
++#include <chrono>
++#include <cstdio>
++#include <cstring>
++#include <functional>
++#include <string>
++#include <vector>
++
++namespace
++{
++int g_failures = 0, g_checks = 0;
++
++void check(bool ok, const std::string &what)
++{
++    ++g_checks;
++    if (!ok)
++    {
++        ++g_failures;
++        std::printf("  FAIL: %s\n", what.c_str());
++    }
++}
++
++void run(const char *name, const std::function<void()> &body)
++{
++    const int before = g_failures;
++    std::printf("[test] %s\n", name);
++    body();
++    std::printf("[%s] %s\n", g_failures == before ? "PASS" : "FAIL", name);
++}
++
++constexpr uint32_t D1 = 0x10009000u, D2 = 0x1000A000u, DSTAT = 0x1000E010u;
++constexpr uint32_t CHCR_STR = 0x100u, CHCR_CHAIN = 1u << 2, CHCR_TTE = 0x40u, CHCR_TIE = 0x80u;
++
++enum Id : uint32_t { REFE = 0, CNT = 1, NEXT = 2, REF = 3, REFS = 4, CALL = 5, RET = 6, END = 7 };
++
++uint64_t dmaTag(Id id, uint32_t qwc, uint32_t addr, bool irq = false)
++{
++    return uint64_t(qwc & 0xFFFF) | (uint64_t(id) << 28) | (irq ? 1ull << 31 : 0) | (uint64_t(addr) << 32);
++}
++
++uint64_t gifTag(uint32_t nloop, bool eop, uint32_t flg, uint32_t nreg)
++{
++    return uint64_t(nloop & 0x7FFF) | (eop ? 1ull << 15 : 0) | (uint64_t(flg) << 58) | (uint64_t(nreg & 0xF) << 60);
++}
++
++uint32_t vifCmd(uint32_t cmd, uint32_t num, uint32_t imm) { return (cmd << 24) | (num << 16) | (imm & 0xFFFF); }
++
++struct Qw
++{
++    uint64_t lo, hi;
++};
++
++// Guest memory writer.
++struct Ram
++{
++    uint8_t *base;
++    void qw(uint32_t addr, uint64_t lo, uint64_t hi)
++    {
++        std::memcpy(base + addr, &lo, 8);
++        std::memcpy(base + addr + 8, &hi, 8);
++    }
++    void tag(uint32_t addr, uint64_t t, uint32_t vif0 = 0, uint32_t vif1 = 0)
++    {
++        qw(addr, t, uint64_t(vif0) | (uint64_t(vif1) << 32));
++    }
++};
++
++// One VIF quadword "NOP NOP NOP DIRECT n" (the DIRECT data that follows stays qword aligned).
++Qw directHeader(uint32_t n) { return {0, uint64_t(vifCmd(0x50, 0, n)) << 32}; }
++
++// A+D packet of `n` writes to the non-register address 0x7F, data words carrying `id`.
++std::vector<Qw> adPacket(uint32_t n, uint64_t id)
++{
++    std::vector<Qw> v{{gifTag(n, true, 0, 1), 0xE}};
++    for (uint32_t i = 0; i < n; ++i)
++        v.push_back({(id << 16) | i, 0x7F});
++    return v;
++}
++
++void appendQws(std::vector<uint8_t> &s, const std::vector<Qw> &q)
++{
++    for (const Qw &x : q)
++    {
++        const size_t at = s.size();
++        s.resize(at + 16);
++        std::memcpy(s.data() + at, &x.lo, 8);
++        std::memcpy(s.data() + at + 8, &x.hi, 8);
++    }
++}
++
++// Independent GIF path cursor (GS manual: PACKED / REGLIST / IMAGE, NLOOP/NREG).
++struct GifCursor
++{
++    uint32_t nloop = 0, loop = 0, nreg = 16, reg = 0, flg = 0;
++    uint64_t tags = 0;
++    bool atBoundary() const { return loop == nloop; }
++    void feed(const uint8_t *d, size_t n)
++    {
++        for (size_t o = 0; o + 16 <= n; o += 16)
++        {
++            uint64_t lo;
++            std::memcpy(&lo, d + o, 8);
++            if (loop == nloop)
++            {
++                nloop = uint32_t(lo & 0x7FFF);
++                flg = uint32_t((lo >> 58) & 3);
++                nreg = uint32_t((lo >> 60) & 0xF);
++                if (!nreg)
++                    nreg = 16;
++                loop = reg = 0;
++                ++tags;
++                continue;
++            }
++            if (flg == 0)
++            {
++                if (++reg == nreg)
++                    reg = 0, ++loop;
++            }
++            else if (flg == 1)
++            {
++                for (int w = 0; w < 2 && loop != nloop; ++w)
++                    if (++reg == nreg)
++                        reg = 0, ++loop;
++            }
++            else
++                ++loop;
++        }
++    }
++};
++
++struct Rig
++{
++    PS2Memory mem;
++    std::vector<uint8_t> path[4];
++    int cur = 2; // GIF path of the channel being kicked (the baseline arbiter does not report the path)
++    GifArbiter arb{[this](const uint8_t *d, uint32_t n) { path[cur].insert(path[cur].end(), d, d + n); }};
++    Ram ram{nullptr};
++    bool ok = false;
++    Rig()
++    {
++        ok = mem.initialize();
++        mem.setGifArbiter(&arb);
++        ram.base = mem.getRDRAM();
++    }
++    void clear()
++    {
++        for (auto &p : path)
++            p.clear();
++    }
++    // Kick a source chain like the game: TADR, then CHCR with STR; then wait for the VIF1 worker.
++    void kick(uint32_t channel, uint32_t tadr, uint32_t extra = 0)
++    {
++        cur = channel == D2 ? 3 : 2;
++        mem.writeIORegister(channel + 0x30u, tadr);
++        mem.writeIORegister(channel + 0x00u, CHCR_STR | CHCR_CHAIN | extra);
++        mem.syncVif1();
++    }
++    uint32_t tadr(uint32_t channel) { return mem.readIORegister(channel + 0x30u); }
++    bool cis(uint32_t bit)
++    {
++        const bool set = (mem.readIORegister(DSTAT) & (1u << bit)) != 0;
++        mem.writeIORegister(DSTAT, 1u << bit); // W1C for the next kick
++        return set;
++    }
++};
++
++// CNT chain of `tags` tags, each one A+D packet behind a DIRECT; END at the end. Returns the
++// expected PATH2 stream and the address of the END tag (the DMAC leaves TADR on an END tag; only
++// MADR moves past it -- same as PCSX2's TAG_END handling).
++std::vector<uint8_t> buildCntChain(Ram &ram, uint32_t at, uint32_t tags, uint32_t &endNext, uint64_t idBase = 0)
++{
++    std::vector<uint8_t> expect;
++    for (uint32_t t = 0; t < tags; ++t)
++    {
++        const auto pkt = adPacket(1, idBase + t);
++        const bool last = t + 1 == tags;
++        if (last)
++            endNext = at;
++        ram.tag(at, dmaTag(last ? END : CNT, 1 + uint32_t(pkt.size()), 0));
++        const Qw h = directHeader(uint32_t(pkt.size()));
++        ram.qw(at + 16, h.lo, h.hi);
++        for (size_t i = 0; i < pkt.size(); ++i)
++            ram.qw(at + 32 + uint32_t(i) * 16, pkt[i].lo, pkt[i].hi);
++        appendQws(expect, pkt);
++        at += 32 + uint32_t(pkt.size()) * 16;
++    }
++    return expect;
++}
++} // namespace
++
++int main()
++{
++    run("long valid VIF1 chain (6000 CNT tags + END) is transferred completely and completes", []
++        {
++        Rig r;
++        check(r.ok, "memory init");
++        uint32_t endNext = 0;
++        const auto expect = buildCntChain(r.ram, 0x100000, 6000, endNext);
++        r.cis(1);
++        r.kick(D1, 0x100000);
++        check(r.path[2].size() == expect.size(), "PATH2 bytes " + std::to_string(r.path[2].size()) + " == " +
++                                                     std::to_string(expect.size()));
++        check(r.path[2] == expect, "PATH2 stream identical to every DIRECT payload in chain order");
++        check(r.tadr(D1) == endNext, "TADR on the END tag (" + std::to_string(r.tadr(D1)) + ")");
++        check(r.cis(1), "D_STAT CIS1 raised"); });
++
++    run("exactly 4096 and 4097 tags (limit boundary)", []
++        {
++        for (uint32_t n : {4095u, 4096u, 4097u})
++        {
++            Rig r;
++            uint32_t endNext = 0;
++            const auto expect = buildCntChain(r.ram, 0x200000, n, endNext);
++            r.kick(D1, 0x200000);
++            check(r.path[2] == expect, std::to_string(n) + " tags: complete stream");
++            check(r.tadr(D1) == endNext, std::to_string(n) + " tags: TADR on the END tag");
++        } });
++
++    run("GIF packet spanning DMA tags across the old 4096-tag point keeps PATH2 in sync for the next kick", []
++        {
++        Rig r;
++        // 4095 CNT packets, then tag 4096 = CNT with a DIRECT opening an IMAGE packet of 64 qwords whose
++        // pixels come from 8 REF tags (8 qwords each) -- the xglPacketTextureTrans shape -- then END.
++        uint32_t at = 0x300000;
++        std::vector<uint8_t> expect;
++        for (uint32_t t = 0; t < 4095; ++t)
++        {
++            const auto pkt = adPacket(1, t);
++            r.ram.tag(at, dmaTag(CNT, 3, 0));
++            const Qw h = directHeader(2);
++            r.ram.qw(at + 16, h.lo, h.hi);
++            r.ram.qw(at + 32, pkt[0].lo, pkt[0].hi);
++            r.ram.qw(at + 48, pkt[1].lo, pkt[1].hi);
++            appendQws(expect, pkt);
++            at += 64;
++        }
++        const uint32_t pixels = 0x380000;
++        r.ram.tag(at, dmaTag(CNT, 2, 0)); // tag #4096
++        const Qw h = directHeader(1 + 64);
++        r.ram.qw(at + 16, h.lo, h.hi);
++        r.ram.qw(at + 32, gifTag(64, true, 2, 0), 0);
++        appendQws(expect, {{gifTag(64, true, 2, 0), 0}});
++        at += 48;
++        for (int i = 0; i < 8; ++i)
++        {
++            r.ram.tag(at, dmaTag(i == 7 ? REFE : REF, 8, pixels + uint32_t(i) * 128));
++            at += 16;
++        }
++        for (uint32_t q = 0; q < 64; ++q)
++        {
++            r.ram.qw(pixels + q * 16, 0xA000 + q, 0xB000 + q);
++            appendQws(expect, {{0xA000 + q, 0xB000 + q}});
++        }
++        r.kick(D1, 0x300000);
++        check(r.path[2] == expect, "first kick: complete PATH2 stream including all 64 pixel qwords");
++        GifCursor c;
++        c.feed(r.path[2].data(), r.path[2].size());
++        check(c.atBoundary(), "PATH2 at a packet boundary after the first kick");
++        // Next frame: a small chain with one A+D packet.
++        r.clear();
++        uint32_t endNext = 0;
++        const auto second = buildCntChain(r.ram, 0x3C0000, 2, endNext, 0x777);
++        r.kick(D1, 0x3C0000);
++        const uint64_t tagsBefore = c.tags;
++        c.feed(r.path[2].data(), r.path[2].size());
++        check(r.path[2] == second, "second kick: its own stream");
++        check(c.tags == tagsBefore + 2 && c.atBoundary(), "second kick's GIFtags parsed as tags (no desynchronization)"); });
++
++    run("CALL/RET nesting (2 levels) with 5000 repeated REFs of one block", []
++        {
++        Rig r;
++        // block: DIRECT + A+D packet (3 qwords), referenced 5000 times from sub2.
++        const uint32_t block = 0x400000;
++        const auto pkt = adPacket(1, 0xB10C);
++        const Qw h = directHeader(2);
++        r.ram.qw(block, h.lo, h.hi);
++        r.ram.qw(block + 16, pkt[0].lo, pkt[0].hi);
++        r.ram.qw(block + 32, pkt[1].lo, pkt[1].hi);
++        // main @0x410000: CALL sub1 (with its own packet), then END (with a packet).
++        // sub1 @0x420000: CALL sub2 (packet), RET (packet). sub2 @0x430000: 5000 REF block, RET.
++        std::vector<uint8_t> expect;
++        auto cntWithPacket = [&](uint32_t at, Id id, uint32_t addr, uint64_t pid) {
++            const auto p = adPacket(1, pid);
++            r.ram.tag(at, dmaTag(id, 3, addr));
++            r.ram.qw(at + 16, h.lo, h.hi);
++            r.ram.qw(at + 32, p[0].lo, p[0].hi);
++            r.ram.qw(at + 48, p[1].lo, p[1].hi);
++            return p;
++        };
++        appendQws(expect, cntWithPacket(0x410000, CALL, 0x420000, 1));
++        appendQws(expect, cntWithPacket(0x420000, CALL, 0x430000, 2));
++        uint32_t at = 0x430000;
++        for (int i = 0; i < 5000; ++i, at += 16)
++        {
++            r.ram.tag(at, dmaTag(REF, 3, block));
++            appendQws(expect, pkt);
++        }
++        appendQws(expect, cntWithPacket(at, RET, 0, 3)); // sub2 RET -> back into sub1
++        appendQws(expect, cntWithPacket(0x420040, RET, 0, 4)); // sub1 RET -> back into main
++        appendQws(expect, cntWithPacket(0x410040, END, 0, 5));
++        r.kick(D1, 0x410000);
++        check(r.path[2] == expect, "every level's payload, 5000 repeated references, in call order");
++        check(r.tadr(D1) == 0x410040, "TADR on main's END tag");
++        check(((r.mem.readIORegister(D1) >> 4) & 3u) == 0u, "ASP back to 0"); });
++
++    run("TTE: VIFcodes in the tag's upper half, 5000 REF tags", []
++        {
++        Rig r;
++        const uint32_t data = 0x500000;
++        const auto pkt = adPacket(1, 0x77E);
++        r.ram.qw(data, pkt[0].lo, pkt[0].hi);
++        r.ram.qw(data + 16, pkt[1].lo, pkt[1].hi);
++        std::vector<uint8_t> expect;
++        uint32_t at = 0x510000;
++        for (int i = 0; i < 5000; ++i, at += 16)
++        {
++            r.ram.tag(at, dmaTag(i == 4999 ? REFE : REF, 2, data), 0, vifCmd(0x50, 0, 2)); // NOP, DIRECT 2
++            appendQws(expect, pkt);
++        }
++        r.kick(D1, 0x510000, CHCR_TTE);
++        check(r.path[2] == expect, "DIRECT from each tag's upper words + REF payload, all 5000");
++        check(r.tadr(D1) == at, "TADR after REFE"); });
++
++    run("termination: REFE, END, RET with ASP 0, IRQ with TIE (and IRQ without TIE continues)", []
++        {
++        Rig r;
++        const auto pkt = adPacket(1, 0xE);
++        const Qw h = directHeader(2);
++        auto block = [&](uint32_t at, Id id, uint32_t addr, bool irq) {
++            r.ram.tag(at, dmaTag(id, 3, addr, irq));
++            r.ram.qw(at + 16, h.lo, h.hi);
++            r.ram.qw(at + 32, pkt[0].lo, pkt[0].hi);
++            r.ram.qw(at + 48, pkt[1].lo, pkt[1].hi);
++        };
++        std::vector<uint8_t> one, two;
++        appendQws(one, pkt);
++        two = one;
++        two.insert(two.end(), one.begin(), one.end());
++        // RET with ASP 0 ends the chain after its data.
++        block(0x600000, RET, 0, false);
++        block(0x600040, CNT, 0, false);
++        r.kick(D1, 0x600000);
++        check(r.path[2] == one, "RET (ASP 0): its data only");
++        // IRQ + TIE stops after the tag's data; without TIE the chain continues to END.
++        r.clear();
++        block(0x601000, CNT, 0, true);
++        block(0x601040, END, 0, false);
++        r.kick(D1, 0x601000, CHCR_TIE);
++        check(r.path[2] == one && r.tadr(D1) == 0x601040, "IRQ+TIE: stops, TADR at the next tag");
++        r.clear();
++        r.kick(D1, 0x601000);
++        check(r.path[2] == two, "IRQ without TIE: continues to END");
++        // REFE: data from ADDR, then stop.
++        r.clear();
++        r.ram.qw(0x602100, h.lo, h.hi);
++        r.ram.qw(0x602110, pkt[0].lo, pkt[0].hi);
++        r.ram.qw(0x602120, pkt[1].lo, pkt[1].hi);
++        r.ram.tag(0x602000, dmaTag(REFE, 3, 0x602100));
++        block(0x602010, END, 0, false);
++        r.kick(D1, 0x602000);
++        check(r.path[2] == one && r.tadr(D1) == 0x602010, "REFE: referenced data only, TADR after the tag"); });
++
++    run("scratchpad: tags in scratchpad (TADR bit 31) and REF data with the SPR bit", []
++        {
++        Rig r;
++        const auto pkt = adPacket(1, 0x5C);
++        const Qw h = directHeader(2);
++        uint8_t *spr = r.mem.getScratchpad();
++        check(spr != nullptr, "scratchpad");
++        if (!spr)
++            return;
++        Ram s{spr};
++        s.qw(0x100, h.lo, h.hi);
++        s.qw(0x110, pkt[0].lo, pkt[0].hi);
++        s.qw(0x120, pkt[1].lo, pkt[1].hi);
++        s.tag(0x000, dmaTag(REF, 3, 0x80000100u)); // ADDR bit 31 (SPR) -> scratchpad +0x100
++        s.tag(0x010, dmaTag(END, 0, 0));
++        std::vector<uint8_t> expect;
++        appendQws(expect, pkt);
++        r.kick(D1, 0x80000000u);
++        check(r.path[2] == expect, "scratchpad tag + scratchpad data"); });
++
++    run("GIF channel (PATH3) chain of 5000 CNT tags is transferred completely", []
++        {
++        Rig r;
++        uint32_t at = 0x700000;
++        std::vector<uint8_t> expect;
++        for (uint32_t t = 0; t < 5000; ++t)
++        {
++            const auto pkt = adPacket(1, t);
++            r.ram.tag(at, dmaTag(t == 4999 ? END : CNT, 2, 0));
++            r.ram.qw(at + 16, pkt[0].lo, pkt[0].hi);
++            r.ram.qw(at + 32, pkt[1].lo, pkt[1].hi);
++            appendQws(expect, pkt);
++            at += 48;
++        }
++        r.kick(D2, 0x700000);
++        check(r.path[3] == expect, "PATH3 bytes " + std::to_string(r.path[3].size()) + " == " + std::to_string(expect.size()));
++        check(r.tadr(D2) == at - 48, "TADR on the END tag"); });
++
++    run("malformed: endless NEXT cycle and CALL cycle terminate promptly with bounded output", []
++        {
++        Rig r;
++        const auto pkt = adPacket(1, 0xC1C);
++        const Qw h = directHeader(2);
++        // A -> B -> A (NEXT), each with a packet.
++        for (uint32_t a : {0x800000u, 0x800100u})
++        {
++            r.ram.tag(a, dmaTag(NEXT, 3, a == 0x800000u ? 0x800100u : 0x800000u));
++            r.ram.qw(a + 16, h.lo, h.hi);
++            r.ram.qw(a + 32, pkt[0].lo, pkt[0].hi);
++            r.ram.qw(a + 48, pkt[1].lo, pkt[1].hi);
++        }
++        auto t0 = std::chrono::steady_clock::now();
++        r.kick(D1, 0x800000);
++        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
++        check(ms < 5000.0, "NEXT cycle: kick returned (" + std::to_string(ms) + " ms)");
++        check(r.path[2].size() <= 64u * 1024u * 1024u, "NEXT cycle: bounded output (" + std::to_string(r.path[2].size()) + " bytes)");
++        GifCursor c;
++        c.feed(r.path[2].data(), r.path[2].size());
++        check(c.atBoundary(), "NEXT cycle: whole packets only (PATH2 at a boundary)");
++        // CALL to a subroutine that NEXTs back to the CALL: the address stack overflows on hardware.
++        r.clear();
++        r.ram.tag(0x810000, dmaTag(CALL, 0, 0x810100));
++        r.ram.tag(0x810100, dmaTag(NEXT, 3, 0x810000));
++        r.ram.qw(0x810110, h.lo, h.hi);
++        r.ram.qw(0x810120, pkt[0].lo, pkt[0].hi);
++        r.ram.qw(0x810130, pkt[1].lo, pkt[1].hi);
++        t0 = std::chrono::steady_clock::now();
++        r.kick(D1, 0x810000);
++        ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
++        check(ms < 5000.0, "CALL cycle: kick returned (" + std::to_string(ms) + " ms)");
++        check(r.path[2].size() <= 64u * 1024u * 1024u, "CALL cycle: bounded output"); });
++
++    run("malformed: tag address outside guest memory stops the walk without a crash", []
++        {
++        Rig r;
++        const auto pkt = adPacket(1, 0xBAD);
++        const Qw h = directHeader(2);
++        r.ram.tag(0x900000, dmaTag(NEXT, 3, 0x01FFFFF8u)); // next tag straddles the end of RAM
++        r.ram.qw(0x900010, h.lo, h.hi);
++        r.ram.qw(0x900020, pkt[0].lo, pkt[0].hi);
++        r.ram.qw(0x900030, pkt[1].lo, pkt[1].hi);
++        std::vector<uint8_t> expect;
++        appendQws(expect, pkt);
++        r.kick(D1, 0x900000);
++        check(r.path[2] == expect, "payload before the bad tag delivered, nothing after"); });
++
++    std::printf("SUMMARY: %d checks, %d failures\n", g_checks, g_failures);
++    std::printf("DMA CHAIN TESTS: %s\n", g_failures ? "FAIL" : "PASS");
++    return g_failures ? 1 : 0;
++}
