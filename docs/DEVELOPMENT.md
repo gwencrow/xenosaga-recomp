@@ -30,6 +30,8 @@ Xenosaga Episode I Recompiled uses PS2Recomp to translate the USA release
   build data. Mark new **handwritten** patch files with `git add -N` so
   they appear in the diff. Verify the refreshed patch with
   `git apply --check` in a clean checkout of the pinned revision.
+- paraLLEl-GS changes go into `patches/parallel-gs.patch` against the pinned
+  revision in `tools/setup_parallel_gs.sh`. Keep them minimal and upstreamable.
 
 ## Code map
 
@@ -38,9 +40,10 @@ Xenosaga Episode I Recompiled uses PS2Recomp to translate the USA release
 | Overlay loading | `src/xenosaga_overlays.cpp` hooks `xglCdLoadOverlay`. The overlays share guest load address `0xA00000`. The hook switches to the corresponding generated function table, whose symbols are prefixed with `xs_ovNN_`. |
 | Disc access | `src/xenosaga_disc.cpp` handles the game's sector-based disc access. `src/xenosaga_iso.h` provides ISO 9660 lookup. |
 | Runtime | The PS2Recomp patch covers EE scheduling, memory and DMA, VIF/VU1, GIF/GS, and device emulation. Work within the patched source and trace both the guest entry point and any host workers it dispatches. |
+| Vulkan GS device | `gs_pgs_device.cpp` adapts paraLLEl-GS behind `gs_device.h`. `gs_frontend.cpp` installs it on the GS worker (`installGifDevice`) and owns teardown. `ps2_gif_arbiter.cpp` and `ps2_memory.cpp` deliver the raw GIF stream (`setRawGifIngress`). `gs_capture.cpp` records `.xgsr` captures. See the [Vulkan renderer guide](VULKAN.md). |
 | DMA chains | `ps2_memory.cpp` walks VIF1/GIF source chains to their terminating tag. Endless chains are stopped by a cycle proof or a 256 MiB host guard, and both are reported. |
 | SIF RPC | `Kernel/Syscalls/RPC.cpp`. The EE RPC server and the `sceSifCallRpc` completion callback run on the suspended caller's guest stack. Other asynchronous guest invocations use synthetic stacks from `EeScheduler::invocationStackTop()` at the top of RDRAM, where the game also loads scene archives. Keep new guest stack users out of that region. |
-| Guest and renderer diagnostics | `src/xenosaga_debug.cpp` supplies the heartbeat. It reports guest thread PCs, VU and GS timing, and display state. The captured `xs_frame.bmp` can help inspect rendering failures. |
+| Guest and renderer diagnostics | `src/xenosaga_debug.cpp` supplies the heartbeat. It reports guest thread PCs, VU and GS timing, display state, GS device statistics and a report-only stall watchdog. The captured `xs_frame.bmp` can help inspect rendering failures. |
 | VU0 calls | The recompiler patch translates `VCALLMSR` using `ctx->vu0_cmsar0`. Check generated code as well as the translator when diagnosing VU0 macro-mode calls. |
 
 ## Diagnose and validate

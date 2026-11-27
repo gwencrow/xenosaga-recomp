@@ -125,6 +125,25 @@ cmake --build "$win_build" --target ps2EntryRunner --parallel 4
 The Windows target requires AVX2. See [VU1 validation](VU1_PERFORMANCE.md)
 for the attended baseline evidence and its scope.
 
+## Optional Vulkan renderer
+
+The [Vulkan renderer](VULKAN.md) is built only when CMake receives a prepared
+paraLLEl-GS checkout. Prepare it once outside `port/`. The helper clones
+paraLLEl-GS `cc6184a` with the submodules a standalone build needs (Granite
+`16e7395`, volk `47cddf7`, Vulkan-Headers `11d6898`). It verifies those
+revisions and applies `patches/parallel-gs.patch`. Running it again on an
+existing checkout repeats the checks and does not apply the patch twice.
+
+```sh
+"$XS_PORT/tools/setup_parallel_gs.sh" "$XS_ROOT/deps/parallel-gs"
+```
+
+Add `-DPS2X_ENABLE_PGS=ON -DPS2X_PGS_SOURCE_DIR="$XS_ROOT/deps/parallel-gs"`
+to the runtime configuration above, or set `PGS_SOURCE` for the incremental
+build below. Without these options the build is identical to the OpenGL/CPU
+configuration. The executable does not import `vulkan-1.dll`: volk loads the
+driver's Vulkan loader at run time, and no additional DLL is staged.
+
 ## Validation
 
 - The Debian 13 workspace already built the Linux analyzer and recompiler,
@@ -150,7 +169,11 @@ metadata. The default output is `runs/build-wsl-validation`. Override
 `BUILD_DIR`, `FFMPEG_PREFIX`, `GAMEFILES` or `PS2RECOMP` for other layouts.
 For offline builds set `FETCH_SOURCES` to an existing FetchContent directory
 containing the matching raylib-src, imgui-src and rlimgui-src directories.
-`JOBS` defaults to four and accepts one through sixteen.
+`JOBS` defaults to four and accepts one through sixteen. Set `PGS_SOURCE` to
+the prepared paraLLEl-GS checkout to build the Vulkan renderer. The script
+refuses a checkout that lacks `patches/parallel-gs.patch`. Set
+`FFMPEG_DEFINE_PREFIX=1` when the FFmpeg prefix was copied from another
+location, so that its pkg-config files resolve under `FFMPEG_PREFIX`.
 
 The patched MinGW pre-link step modifies input archives, so a second build
 may relink the runner. Unchanged translation units stay cached. The wrapper
