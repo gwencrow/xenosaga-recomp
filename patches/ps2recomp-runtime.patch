@@ -5637,7 +5637,7 @@ index d6b7549..973e8d4 100644
  static constexpr uint32_t kTlsPoolBytes = 0x00010000;
  static constexpr uint32_t kTlsBlockSize = 0x100;
 diff --git a/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp b/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp
-index 07fcd29..06cfe15 100644
+index 07fcd29..96d2611 100644
 --- a/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp
 +++ b/ps2xRuntime/src/lib/Kernel/Syscalls/RPC.cpp
 @@ -1,6 +1,11 @@
@@ -5692,7 +5692,28 @@ index 07fcd29..06cfe15 100644
              client->server = serverPtr;
              client->buf = sd ? sd->buf : 0;
              client->cbuf = sd ? sd->cbuf : 0;
-@@ -502,7 +512,10 @@ namespace ps2_syscalls
+@@ -339,6 +349,20 @@ namespace ps2_syscalls
+         setReturnS32(ctx, 0);
+     }
+ 
++    namespace
++    {
++        // These RPC invocations suspend their owning thread until completion.
++        // Use its stack with space for outgoing arguments. The synthetic
++        // invocation stack in high RDRAM can overlap guest resource buffers.
++        void useRpcCallerStack(R5900Context &context)
++        {
++            constexpr uint32_t kOutgoingArgumentBytes = 0x20u;
++            const uint32_t sp = getRegU32(&context, 29);
++            if (sp != 0u)
++                SET_GPR_U32(&context, 29, sp - kOutgoingArgumentBytes);
++        }
++    }
++
+     void SifCallRpc(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+     {
+         std::lock_guard<std::recursive_mutex> rpcCallLock(g_sif_call_rpc_mutex);
+@@ -502,7 +526,10 @@ namespace ps2_syscalls
          }
  
          const uint32_t serverPtr = client->server;
@@ -5704,7 +5725,16 @@ index 07fcd29..06cfe15 100644
                             ? reinterpret_cast<t_SifRpcServerData *>(getMemPtr(rdram, serverPtr))
                             : nullptr;
          if (server)
-@@ -702,20 +715,238 @@ namespace ps2_syscalls
+@@ -672,7 +699,7 @@ namespace ps2_syscalls
+             callback.context = parent;
+             callback.context.pc = callbackFunction;
+             SET_GPR_U32(&callback.context, 4, endParameter);
+-            SET_GPR_U32(&callback.context, 29, runtime->eeScheduler().invocationStackTop());
++            useRpcCallerStack(callback.context);
+             SET_GPR_U32(&callback.context, 31, 0u);
+             callback.onComplete = [completeClient](const R5900Context &, R5900Context &base)
+             {
+@@ -702,20 +729,238 @@ namespace ps2_syscalls
          finishCall(nullptr, *ctx);
      }
  
@@ -5801,7 +5831,7 @@ index 07fcd29..06cfe15 100644
 +            SET_GPR_U32(&invocation.context, 4, request.call.function);
 +            SET_GPR_U32(&invocation.context, 5, buffer);
 +            SET_GPR_U32(&invocation.context, 6, sendSize);
-+            SET_GPR_U32(&invocation.context, 29, ee.invocationStackTop());
++            useRpcCallerStack(invocation.context);
 +            SET_GPR_U32(&invocation.context, 31, 0u);
 +            const uint64_t token = request.call.token;
 +            const uint32_t receiveSize = request.call.receiveSize;
@@ -5951,7 +5981,7 @@ index 07fcd29..06cfe15 100644
  
          t_SifRpcServerData *sd = reinterpret_cast<t_SifRpcServerData *>(getMemPtr(rdram, sdPtr));
          if (!sd)
-@@ -786,6 +1017,7 @@ namespace ps2_syscalls
+@@ -786,6 +1031,7 @@ namespace ps2_syscalls
              }
  
              g_rpc_servers[sid] = {sid, sdPtr};
@@ -17430,3 +17460,159 @@ index 0000000..b93a480
 +    std::printf("DMA CHAIN TESTS: %s\n", g_failures ? "FAIL" : "PASS");
 +    return g_failures ? 1 : 0;
 +}
+diff --git a/ps2xTest/src/ps2_sif_rpc_tests.cpp b/ps2xTest/src/ps2_sif_rpc_tests.cpp
+index 7242e65..3364a45 100644
+--- a/ps2xTest/src/ps2_sif_rpc_tests.cpp
++++ b/ps2xTest/src/ps2_sif_rpc_tests.cpp
+@@ -1,4 +1,5 @@
+ #include "MiniTest.h"
++#include "Kernel/Syscalls/RPC.h"
+ #include "ps2_runtime.h"
+ #include "ps2_runtime_macros.h"
+ #include "ps2_iop_transport.h"
+@@ -6,6 +7,7 @@
+ #include "ps2_stubs.h"
+ #include "runtime/ee_scheduler.h"
+ 
++#include <algorithm>
+ #include <array>
+ #include <cstdint>
+ #include <cstring>
+@@ -183,12 +185,137 @@ namespace
+         std::memcpy(&value, rdram + addr, sizeof(value));
+         return value;
+     }
++    constexpr uint32_t kServerEntry = 0x00101100u;
++    constexpr uint32_t kRpcEntry = 0x00101110u;
++    constexpr uint32_t kRpcResume = 0x00101120u;
++    constexpr uint32_t kServerQueue = 0x00021000u;
++    constexpr uint32_t kServerDescriptor = 0x00021100u;
++    constexpr uint32_t kServerBuffer = 0x00021200u;
++    constexpr uint32_t kClientDescriptor = 0x00021400u;
++    constexpr uint32_t kServerStackResult = 0x00021300u;
++    constexpr uint32_t kServerThreadStack = 0x00120000u;
++    constexpr uint32_t kArchiveSentinelSize = 0x4000u;
++
++    void testEeRpcServer(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
++    {
++        const uint32_t stack = getRegU32Result(*ctx, 29);
++        writeGuestU32(rdram, kServerStackResult, stack);
++        writeGuestU32(rdram, stack - sizeof(uint32_t), 0x12345678u);
++        setRegU32(*ctx, 2, kServerBuffer);
++        ctx->pc = 0u;
++    }
++
++    void serveEeRpcLoop(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
++    {
++        if (readGuestStruct<uint32_t>(rdram, kServerStackResult) != 0)
++            runtime->requestStop();
++        else
++            SifRpcLoop(rdram, ctx, runtime);
++    }
++
++    void serveEeRpcRequest(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
++    {
++        SifGetNextRequest(rdram, ctx, runtime);
++        setRegU32(*ctx, 4, getRegU32Result(*ctx, 2));
++        ctx->pc = kRpcResume;
++        SifExecRequest(rdram, ctx, runtime);
++    }
++
++    void serveEeRpcCompletion(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
++    {
++        setRegU32(*ctx, 4, kClientDescriptor);
++        setRegU32(*ctx, 5, 0x1234u);
++        SifBindRpc(rdram, ctx, runtime);
++
++        setRegU32(*ctx, 4, kClientDescriptor);
++        setRegU32(*ctx, 5, 1u);
++        setRegU32(*ctx, 11, kServerEntry);
++        ctx->pc = kRpcResume;
++        SifCallRpc(rdram, ctx, runtime);
++    }
++
++    enum class RpcPath { Loop, ExplicitRequest, Completion };
++
++    void checkEeRpcStack(TestCase &t, RpcPath path)
++    {
++        PS2Runtime runtime;
++        const bool initialized = runtime.memory().initialize();
++        t.IsTrue(initialized, "initialize guest RAM");
++        if (!initialized)
++            return;
++        ps2_stubs::resetSifState();
++        uint8_t *rdram = runtime.memory().getRDRAM();
++        uint8_t *archive = rdram + PS2_RAM_SIZE - kArchiveSentinelSize;
++        std::memset(archive, 0xA5, kArchiveSentinelSize);
++
++        runtime.registerFunction(kServerEntry, testEeRpcServer);
++        auto entry = serveEeRpcLoop;
++        if (path == RpcPath::ExplicitRequest)
++            entry = serveEeRpcRequest;
++        if (path == RpcPath::Completion)
++            entry = serveEeRpcCompletion;
++        runtime.registerFunction(kRpcEntry, entry);
++        runtime.registerFunction(kRpcResume, [](uint8_t *, R5900Context *, PS2Runtime *rt)
++                                 { rt->requestStop(); });
++        R5900Context context{};
++        setRegU32(context, 4, kServerDescriptor);
++        setRegU32(context, 5, 0x1234u);
++        setRegU32(context, 6, path == RpcPath::Completion ? 0u : kServerEntry);
++        setRegU32(context, 7, kServerBuffer);
++        setRegU32(context, 10, kServerQueue);
++        SifRegisterRpc(rdram, &context, &runtime);
++
++        if (path != RpcPath::Completion)
++        {
++            ps2x::iop::EeRpcCall call{};
++            call.sid = 0x1234u;
++            call.send = {0x42};
++            const bool queued = queueEeRpcFromIop(&runtime, std::move(call));
++            t.IsTrue(queued, "queue an IOP call to the guest server");
++            if (!queued)
++                return;
++        }
++        else
++        {
++            setRegU32(context, 6, 0u);
++            setRegU32(context, 7, 0u);
++            setRegU32(context, 10, 0u);
++        }
++
++        context.pc = kRpcEntry;
++        setRegU32(context, 4, kServerQueue);
++        setRegU32(context, 29, kServerThreadStack);
++        runtime.eeScheduler().reset(rdram, context);
++        runtime.eeScheduler().run();
++
++        const uint32_t stack = readGuestStruct<uint32_t>(rdram, kServerStackResult);
++        t.IsTrue(stack < kServerThreadStack && stack >= kServerThreadStack - 0x100u,
++                 "RPC invocation entered on the guest thread stack");
++        t.IsTrue(std::all_of(archive, archive + kArchiveSentinelSize,
++                             [](uint8_t b) { return b == 0xA5; }),
++                 "RPC invocation left the archive at the top of RDRAM intact");
++        if (path != RpcPath::Completion)
++            t.Equals(rdram[kServerBuffer], uint8_t{0x42}, "server received the request data");
++    }
++
+ }
+ 
+ void register_ps2_sif_rpc_tests()
+ {
+     MiniTest::Case("PS2SifRpc", [](TestCase &tc)
+     {
++        tc.Run("SifRpcLoop uses the guest server thread stack", [](TestCase &t)
++        {
++            checkEeRpcStack(t, RpcPath::Loop);
++        });
++        tc.Run("SifExecRequest uses the guest caller stack", [](TestCase &t)
++        {
++            checkEeRpcStack(t, RpcPath::ExplicitRequest);
++        });
++        tc.Run("SifCallRpc completion uses the guest caller stack", [](TestCase &t)
++        {
++            checkEeRpcStack(t, RpcPath::Completion);
++        });
+         tc.Run("SifInitRpc does not reset the running IOP", [](TestCase &t)
+         {
+             TestEnv env;
