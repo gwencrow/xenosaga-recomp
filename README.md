@@ -152,25 +152,25 @@ Graphics, audio, and gameplay options can be configured through `settings.ini` n
 ### Core Development
 
 - [ ] Stable 30 FPS gameplay
-- [ ] Further native VU1 optimization
-- [ ] GS rendering optimization
+- [ ] Further native VU1 optimization ([#6](https://github.com/gwencrow/xenosaga-recomp/issues/6))
+- [ ] GS rendering optimization ([#7](https://github.com/gwencrow/xenosaga-recomp/issues/7))
 - [x] Evaluate an optional Vulkan graphics backend using paraLLEl-GS ([#23](https://github.com/gwencrow/xenosaga-recomp/issues/23))
-- [ ] Integrate the Vulkan renderer into the Windows launcher
+- [ ] Integrate the Vulkan renderer into the Windows launcher ([#42](https://github.com/gwencrow/xenosaga-recomp/issues/42))
 - [ ] Graphics accuracy improvements
-- [ ] Audio synchronization fixes
-- [ ] Full-game compatibility testing
+- [ ] Audio synchronization fixes ([#5](https://github.com/gwencrow/xenosaga-recomp/issues/5))
+- [ ] Full-game compatibility testing ([#16](https://github.com/gwencrow/xenosaga-recomp/issues/16))
 
 ### Planned Enhancements
 
-- [ ] Native widescreen support with corrected HUD and menu scaling
-- [ ] 60 FPS and higher frame rate support
-- [ ] Japanese and English voice selection
-- [ ] Improved launcher with configurable enhancements and graphics presets
+- [ ] Native widescreen support with corrected HUD and menu scaling ([#14](https://github.com/gwencrow/xenosaga-recomp/issues/14))
+- [ ] 60 FPS and higher frame rate support ([#44](https://github.com/gwencrow/xenosaga-recomp/issues/44))
+- [ ] Japanese and English voice selection ([#45](https://github.com/gwencrow/xenosaga-recomp/issues/45))
+- [ ] Improved launcher with configurable enhancements and graphics presets ([#46](https://github.com/gwencrow/xenosaga-recomp/issues/46))
 
 ### Installation and Compatibility
 
-- [ ] Improved installation process
-- [ ] Broader GPU and driver compatibility testing
+- [ ] Improved installation process ([#8](https://github.com/gwencrow/xenosaga-recomp/issues/8))
+- [ ] Broader GPU and driver compatibility testing ([#43](https://github.com/gwencrow/xenosaga-recomp/issues/43))
 
 ## Development
 
