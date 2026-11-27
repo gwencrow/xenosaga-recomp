@@ -69,7 +69,7 @@ The goal is to make Xenosaga Episode I playable on modern PCs with good performa
 - AVX2-capable processor
 - Approximately 10 GB of available storage
 - OpenGL 4.5 with fragment shader interlock for the OpenGL renderer
-- For the optional Vulkan renderer: a Vulkan 1.1+ GPU and driver (validated only on an NVIDIA GeForce RTX 4090)
+- For the optional Vulkan renderer: a GPU and driver supporting the Vulkan features required by paraLLEl-GS (validated only on an NVIDIA GeForce RTX 4090). See the [Vulkan renderer guide](docs/VULKAN.md).
 
 A CPU renderer is available for systems without compatible graphics hardware.
 
@@ -149,16 +149,28 @@ Graphics, audio, and gameplay options can be configured through `settings.ini` n
 
 ## Roadmap
 
+### Core Development
+
 - [ ] Stable 30 FPS gameplay
 - [ ] Further native VU1 optimization
 - [ ] GS rendering optimization
 - [x] Evaluate an optional Vulkan graphics backend using paraLLEl-GS ([#23](https://github.com/gwencrow/xenosaga-recomp/issues/23))
-- [ ] Include the Vulkan renderer in the launcher build and test more GPUs
+- [ ] Integrate the Vulkan renderer into the Windows launcher
 - [ ] Graphics accuracy improvements
 - [ ] Audio synchronization fixes
-- [ ] Improved widescreen support
-- [ ] Improved installation process
 - [ ] Full-game compatibility testing
+
+### Planned Enhancements
+
+- [ ] Native widescreen support with corrected HUD and menu scaling
+- [ ] 60 FPS and higher frame rate support
+- [ ] Japanese and English voice selection
+- [ ] Improved launcher with configurable enhancements and graphics presets
+
+### Installation and Compatibility
+
+- [ ] Improved installation process
+- [ ] Broader GPU and driver compatibility testing
 
 ## Development
 
