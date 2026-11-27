@@ -9,6 +9,9 @@ Notable changes to Xenosaga Episode I: Recompiled are recorded here. This projec
 - Fixed silent truncation of DMA source chains exceeding 4,096 tags, which could cause persistent texture and UI corruption or gameplay stalls. DMA traversal now continues to the terminating tag, with cycle detection and bounded safety guards.
 - Validated the isolated DMA correction through 34 regression checks, sanitizer testing and native Windows OpenGL gameplay. The previously observed Woglinde graphical corruption was not reproduced, and 22 long DMA chains completed without reported truncation.
 
+- Corrected SIF RPC callback stack handling to prevent synthetic stack writes from overwriting guest scene resources. RPC callbacks now use the caller's guest stack, addressing corruption responsible for missing EXIT and EVS markers in Woglinde.
+- Added regression coverage for RPC guest stack preservation.
+
 ## 2026-11-26
 
 ### Development validation
