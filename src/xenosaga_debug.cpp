@@ -514,6 +514,24 @@ void xs_startHeartbeat(PS2Runtime &runtime)
             std::cout << "[heartbeat " << beat * seconds << "s] cycles=" << snap.eeCycle
                       << (snap.eeCycle == lastCycle ? " (stalled)" : "")
                       << " running=" << snap.runningThreadId << std::endl;
+            {
+                // Stall watchdog (report only: nothing is unblocked, completed or killed). While the
+                // guest makes no progress, every beat prints who waits for whom; the second stalled beat
+                // also writes the GS capture ring when capture is armed (PS2X_GS_CAPTURE_MB).
+                static int stalledBeats = 0;
+                stalledBeats = (snap.eeCycle == lastCycle) ? stalledBeats + 1 : 0;
+                if (stalledBeats > 0)
+                {
+                    std::cout << "[stall-watchdog] guest cycles unchanged for " << stalledBeats * seconds << " s" << std::endl;
+                    std::fputs(runtime.gs().stallReport().c_str(), stdout);
+                    if (stalledBeats == 2)
+                    {
+                        const std::string path = runtime.gs().captureDump("stall-watchdog");
+                        std::cout << "[stall-watchdog] GS capture dump: " << (path.empty() ? "none (capture off or not possible)" : path)
+                                  << std::endl;
+                    }
+                }
+            }
             lastCycle = snap.eeCycle;
 #ifdef PS2X_PGO_GENERATE
             {
@@ -557,15 +575,20 @@ void xs_startHeartbeat(PS2Runtime &runtime)
                 }
                 std::printf("\n");
                 std::fputs(ps2x_vu1StatsReport().c_str(), stdout);
+                // GS queue back-pressure and, with renderer = vulkan, the device's
+                // GIF/present/readback/FIFO timings since the last heartbeat.
+                std::fputs(runtime.gs().gifDeviceStatsReport().c_str(), stdout);
             }
             {
                 const GSRegisters &gs = runtime.memory().gs();
-                char regs[200];
+                char regs[260];
+                // SMODE1/SMODE2 too: the Vulkan renderer selects the video mode from them.
                 std::snprintf(regs, sizeof(regs),
-                              "  gs pmode=0x%llx dispfb1=0x%llx display1=0x%llx dispfb2=0x%llx display2=0x%llx",
-                              (unsigned long long)gs.pmode, (unsigned long long)gs.dispfb1,
-                              (unsigned long long)gs.display1, (unsigned long long)gs.dispfb2,
-                              (unsigned long long)gs.display2);
+                              "  gs pmode=0x%llx smode1=0x%llx smode2=0x%llx dispfb1=0x%llx display1=0x%llx dispfb2=0x%llx "
+                              "display2=0x%llx",
+                              (unsigned long long)gs.pmode, (unsigned long long)gs.smode1, (unsigned long long)gs.smode2,
+                              (unsigned long long)gs.dispfb1, (unsigned long long)gs.display1,
+                              (unsigned long long)gs.dispfb2, (unsigned long long)gs.display2);
                 const std::filesystem::path shot = PS2Runtime::getIoPaths().elfDirectory / "xs_frame.bmp";
                 std::cout << regs << (saveFrameBmp(runtime, shot) ? "  frame saved" : "  no frame") << std::endl;
                 // XS_FRAME_KEEP=1: also keep every heartbeat's frame as
@@ -584,7 +607,9 @@ void xs_startHeartbeat(PS2Runtime &runtime)
                 // Raw 4 MB GS memory next to the frame, for decoding textures
                 // offline (port/tools/gsvram.py). Taken without locking, so a
                 // texture being uploaded at that moment may be torn.
-                if (const uint8_t *vram = runtime.memory().getGSVRAM())
+                // With the Vulkan device GS memory is GPU-resident and the host copy is stale:
+                // skip it rather than write misleading data (no full readback per heartbeat).
+                if (const uint8_t *vram = runtime.gs().hasGifDevice() ? nullptr : runtime.memory().getGSVRAM())
                 {
                     std::ofstream out(PS2Runtime::getIoPaths().elfDirectory / "xs_vram.bin", std::ios::binary);
                     out.write(reinterpret_cast<const char *>(vram), PS2_GS_VRAM_SIZE);

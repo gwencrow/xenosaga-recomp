@@ -43,7 +43,8 @@ The goal is to make Xenosaga Episode I playable on modern PCs with good performa
 | Exploration and battles | Tested in early-game areas |
 | Audio | Working, with synchronization issues |
 | Keyboard and controller | Supported |
-| GPU rendering | Supported |
+| GPU rendering (OpenGL) | Supported |
+| Vulkan rendering (paraLLEl-GS) | Experimental; preferred on the validated Windows/NVIDIA system |
 | Resolution scaling | Supported |
 | Widescreen | Experimental |
 | Full-game compatibility | Untested |
@@ -52,6 +53,7 @@ The goal is to make Xenosaga Episode I playable on modern PCs with good performa
 
 - Native Windows x64 execution
 - GPU-accelerated OpenGL rendering
+- Experimental Vulkan renderer based on [paraLLEl-GS](https://github.com/Arntzen-Software/parallel-gs), with native resolution (X1), genuine 2x per-axis internal rasterization (X4), and additional X8/X16 sampling modes
 - Adjustable internal resolution
 - Fullscreen and experimental widescreen support
 - Keyboard and controller input
@@ -66,9 +68,26 @@ The goal is to make Xenosaga Episode I playable on modern PCs with good performa
 - Windows 10 or 11 (64-bit)
 - AVX2-capable processor
 - Approximately 10 GB of available storage
-- OpenGL 4.5 with fragment shader interlock for GPU rendering
+- OpenGL 4.5 with fragment shader interlock for the OpenGL renderer
+- For the optional Vulkan renderer: a Vulkan 1.1+ GPU and driver (validated only on an NVIDIA GeForce RTX 4090)
 
 A CPU renderer is available for systems without compatible graphics hardware.
+
+### Vulkan renderer (experimental)
+
+The Vulkan renderer is the preferred backend on the validated system: Windows 11, Intel Core i9-13900K,
+NVIDIA GeForce RTX 4090. The recommended setting there is 2x internal resolution with 16x super-sampling.
+Compared with OpenGL in the tested scenes, it avoids the vertical shadow streaking. It is still experimental:
+
+- It is built only when the paraLLEl-GS sources are supplied (see the
+  [WSL2 build guide](docs/BUILD_WSL.md#optional-vulkan-renderer)). The launcher build does not include it yet.
+- Other GPUs, including AMD and Intel, and other drivers are untested.
+- Frame rates still drop below 30 FPS in demanding areas and in-engine cutscenes.
+  Sustained 30 FPS gameplay remains an outstanding development goal.
+- If Vulkan cannot start, the game exits with a message by default instead of switching renderers.
+
+Select it with `renderer = vulkan` in `settings.ini`. See the [Vulkan renderer guide](docs/VULKAN.md) for
+the settings and diagnostics.
 
 ### Installation
 
@@ -117,9 +136,11 @@ Graphics, audio, and gameplay options can be configured through `settings.ini` n
 
 ## Known Issues
 
-- Low frame rates in demanding areas and cutscenes.
+- Low frame rates in demanding areas and cutscenes, for example around the central terminals on the Woglinde.
 - Audio desynchronization during in-engine cutscenes.
-- Occasional texture, shadow, and geometry artifacts.
+- Occasional texture, shadow, and geometry artifacts. The OpenGL renderer shows vertical shadow streaking.
+  The Vulkan renderer did not show it in the tested scenes.
+- The Vulkan renderer is validated only on one Windows/NVIDIA system.
 - Residual vertical shaking at higher internal resolutions ([#21](https://github.com/gwencrow/xenosaga-recomp/issues/21)).
 - Flickering and bottom-edge artifacts in pre-rendered cutscenes ([#20](https://github.com/gwencrow/xenosaga-recomp/issues/20)).
 - Corrupted save thumbnails ([#22](https://github.com/gwencrow/xenosaga-recomp/issues/22)).
@@ -131,7 +152,8 @@ Graphics, audio, and gameplay options can be configured through `settings.ini` n
 - [ ] Stable 30 FPS gameplay
 - [ ] Further native VU1 optimization
 - [ ] GS rendering optimization
-- [ ] Evaluate an optional Vulkan graphics backend using paraLLEl-GS ([#23](https://github.com/gwencrow/xenosaga-recomp/issues/23))
+- [x] Evaluate an optional Vulkan graphics backend using paraLLEl-GS ([#23](https://github.com/gwencrow/xenosaga-recomp/issues/23))
+- [ ] Include the Vulkan renderer in the launcher build and test more GPUs
 - [ ] Graphics accuracy improvements
 - [ ] Audio synchronization fixes
 - [ ] Improved widescreen support
@@ -143,6 +165,7 @@ Graphics, audio, and gameplay options can be configured through `settings.ini` n
 The port uses static recompilation to translate the original PS2 executable and its five code overlays into native host code.
 
 It currently targets PS2Recomp commit `e563698` with the modifications in `patches/ps2recomp-runtime.patch`.
+The optional Vulkan renderer uses paraLLEl-GS commit `cc6184a` with `patches/parallel-gs.patch`.
 
 The [Xenosaga Episode I decompilation project](https://github.com/OpokXeno/xsg-i-decomp) serves as a technical reference for understanding the original game's architecture, function symbols, rendering pipeline, audio systems, and game-specific behavior. Its use as a reference has been [authorized by the project owner](https://github.com/OpokXeno/xsg-i-decomp/issues/74#issuecomment-7188213847), with attribution.
 
@@ -152,7 +175,7 @@ The recompilation and decompilation projects are independent. Recovered game sou
 |---|---|
 | `src/` | Game-specific hooks and overrides |
 | `tools/` | Build and diagnostic utilities |
-| `patches/` | PS2Recomp runtime modifications |
+| `patches/` | PS2Recomp runtime and paraLLEl-GS modifications |
 | `launcher/` | Windows launcher |
 | `dist/` | Runtime launch script |
 | `tests/` | Unit tests and host-side regression tests |
@@ -163,6 +186,7 @@ The recompilation and decompilation projects are independent. Recovered game sou
 
 - [Development Guide](docs/DEVELOPMENT.md)
 - [WSL2 Build Guide](docs/BUILD_WSL.md)
+- [Vulkan Renderer](docs/VULKAN.md)
 - [VU1 Performance and Validation](docs/VU1_PERFORMANCE.md)
 - [Changelog](CHANGELOG.md)
 
@@ -183,6 +207,7 @@ Do not upload game files, generated game code, memory dumps, or other proprietar
 - [BeyondNeteros](https://github.com/BeyondNeteros): Original port development
 - [OpokXeno and contributors](https://github.com/OpokXeno/xsg-i-decomp): Xenosaga Episode I decompilation, technical documentation, and reverse-engineering research.
 - [PS2Recomp](https://github.com/ran-j/PS2Recomp): Recompilation framework
+- [paraLLEl-GS](https://github.com/Arntzen-Software/parallel-gs) and [Granite](https://github.com/Themaister/Granite): Vulkan GS renderer (optional)
 - [FFmpeg](https://ffmpeg.org/): Multimedia decoding
 
 ## Image Credits
@@ -202,7 +227,11 @@ modify it under the terms of the **GNU General Public License, version 3**
 (see [`LICENSE`](LICENSE)), the same license as
 [PS2Recomp](https://github.com/ran-j/PS2Recomp), which this port builds on and
 patches. Parts of the movie decoder's MPEG tables come from FFmpeg
-(LGPL 2.1 or later), credited in that file.
+(LGPL 2.1 or later), credited in that file. `patches/parallel-gs.patch`
+modifies paraLLEl-GS and is provided under paraLLEl-GS's license
+(LGPL 3.0 or later). paraLLEl-GS, Granite (MIT), volk (MIT) and
+Vulkan-Headers (Apache 2.0 / MIT) are fetched separately and keep their own
+licenses. See the [Vulkan renderer guide](docs/VULKAN.md#licenses).
 
 The license covers this project's own code only:
 

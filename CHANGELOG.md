@@ -4,6 +4,15 @@ Notable changes to Xenosaga Episode I: Recompiled are recorded here. This projec
 
 ## Unreleased
 
+### Graphics
+
+- Added an experimental Vulkan renderer based on paraLLEl-GS (`renderer = vulkan`), using the game's raw GIF stream.
+- Added native resolution (X1), genuine 2x per-axis internal rasterization (X4), and additional X8/X16 sampling modes.
+- The Vulkan renderer did not exhibit the OpenGL vertical shadow streaking in the tested scenes.
+- Vulkan initialization failures are explicit. Automatic fallback is disabled by default and can be enabled through `vulkan_fallback`.
+- Added staged Vulkan device shutdown and diagnostics, correcting a shutdown hang observed during development.
+- Added opt-in GS capture and offline replay. Captures contain game data and must remain private.
+
 ### Runtime
 
 - Fixed silent truncation of DMA source chains exceeding 4,096 tags, which could cause persistent texture and UI corruption or gameplay stalls. DMA traversal now continues to the terminating tag, with cycle detection and bounded safety guards.
@@ -11,6 +20,22 @@ Notable changes to Xenosaga Episode I: Recompiled are recorded here. This projec
 
 - Corrected SIF RPC callback stack handling to prevent synthetic stack writes from overwriting guest scene resources. RPC callbacks now use the caller's guest stack, addressing corruption responsible for missing EXIT and EVS markers in Woglinde.
 - Added regression coverage for RPC guest stack preservation.
+
+### Build and testing
+
+- Added pinned paraLLEl-GS dependency acquisition and optional Vulkan compilation through the WSL2 build workflow.
+- Added regression suites for GIF ingress, Vulkan device integration, display, shutdown, rendering paths, capture and replay.
+- Added reproducible synthetic fixture generators.
+- Existing unrelated runtime and GS regression failures remain unchanged.
+
+### Known limitations
+
+- Vulkan gameplay has been validated on Windows 11 with an NVIDIA GeForce RTX 4090. Other GPU and driver configurations remain untested.
+- Sustained 30 FPS gameplay has not been achieved in demanding areas.
+- Cinematic audio synchronization remains unresolved.
+- Vulkan currently supports up to genuine 2x internal resolution.
+- The standard Windows launcher build does not yet include Vulkan.
+- Broader gameplay and full-game compatibility testing remain necessary.
 
 ## 2026-11-26
 
