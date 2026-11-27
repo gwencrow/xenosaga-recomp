@@ -3,7 +3,7 @@
 The optional Vulkan renderer sends the game's raw GIF stream (PATH1, PATH2 and PATH3, after arbitration)
 to [paraLLEl-GS](https://github.com/Arntzen-Software/parallel-gs), which emulates the GS on the GPU. It runs
 on the existing GS worker thread. All Granite and Vulkan objects are created, used and destroyed there.
-The OpenGL and CPU renderers are unchanged. Use them as references when you diagnose a Vulkan problem.
+The OpenGL and CPU renderers remain available. Use them as references when diagnosing Vulkan problems.
 
 ## Status
 
@@ -11,7 +11,7 @@ The OpenGL and CPU renderers are unchanged. Use them as references when you diag
 |---|---|
 | Validated system | Windows 11, Intel Core i9-13900K, NVIDIA GeForce RTX 4090, 64 GB RAM |
 | Attended gameplay on that system | Native (X1), 2x (X4), 2x + 8 samples (X8), 2x + 16 samples (X16); combat, area transitions, Game Over and save reload; the Woglinde EXIT and EVS markers; an OpenGL control run; a validation-layer run with no validation messages; the driver-hidden and fault-injection initialization-failure controls; normal shutdown; the standalone device test suites |
-| Performance (2x/X16, one attended run) | average 28 FPS, median 30 FPS; drops around the central Woglinde terminals. Gameplay observation, not a controlled benchmark |
+| Performance | Frame rates remain below 30 FPS in demanding areas, including the central Woglinde terminals. Sustained 30 FPS has not been achieved. |
 | Other GPUs and drivers (AMD, Intel, older NVIDIA) | untested |
 | Linux gameplay | not a target; the host test suites run on Linux with llvmpipe |
 | Launcher build | does not include the renderer yet (build it with the WSL2 workflow) |
